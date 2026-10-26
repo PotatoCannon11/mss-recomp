@@ -904,7 +904,9 @@ void gfx_present(int sx, int sy, int sw, int sh) {
     int every = getenv("RT_FRAMES_EVERY") ? atoi(getenv("RT_FRAMES_EVERY")) : 60;
     if (sw > EFB_W - sx) sw = EFB_W - sx;
     if (sh > EFB_H - sy) sh = EFB_H - sy;
-    if (dir && every > 0 && g_gpu.frames % every == 0) {
+    static long ffrom = -2, fto;
+    if (ffrom == -2) { ffrom = getenv("RT_FRAMES_FROM") ? atol(getenv("RT_FRAMES_FROM")) : 0; fto = getenv("RT_FRAMES_TO") ? atol(getenv("RT_FRAMES_TO")) : 1L << 40; }
+    if (dir && every > 0 && g_gpu.frames % every == 0 && (long)g_gpu.frames >= ffrom && (long)g_gpu.frames <= fto) {
         glBindFramebuffer(GL_READ_FRAMEBUFFER, efb_fbo);
         glPixelStorei(GL_PACK_ALIGNMENT, 1);
         glReadPixels(0, 0, EFB_W, EFB_H, GL_RGBA, GL_UNSIGNED_BYTE, frame_rgba);

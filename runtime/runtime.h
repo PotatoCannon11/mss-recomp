@@ -29,7 +29,10 @@ typedef struct {
     float acc_x, acc_y, acc_z; /* g */
     float ir_x, ir_y;       /* pointer, -1..1 */
     int ir_valid;
+    int swing_t;            /* >0 while a swing gesture plays */
+    float rest_y, rest_z;   /* resting gravity (flat: 0,1; pointing up: 1,0) */
 } HostPad;
+void wpad_start_swing(void);
 extern HostPad g_pad;
 void wpad_tick(CPU *c);
 void rt_timer_start(void);

@@ -42,3 +42,13 @@ Check in over SSH:
 - Live match plays: batting as Mario (Swing prompt, pitches, count, outs) -> CHANGE SIDES ->
   scoreboard -> pitching. Contact sheet: build/live_gameplay.png
 - Open: does the swing gesture register (outs may be strikeouts)? which button skips tutorials?
+
+## 2026-10-26 late night
+- FIX: motion controls work. KPAD reported a frozen accelerometer because WPADGetDataFormat
+  (unnamed fn_806022D0) read the SDK's unpopulated control block and returned "buttons only";
+  now HLE'd along with the DPD-mode query (fn_80604A64). Swings register: batting practice
+  "GOOD!", live at-bats swing. Contact sheet: build/swing_works.png
+- Swing is a 13-sample acceleration profile (Space key, or `S` in RT_INPUT); `P`/`Q` in
+  RT_INPUT hold the remote pointing up/down. RT_FRAMES_FROM/TO limit frame dumps; RT_PADLOG
+  logs the game's KPADStatus.
+- Next: check the IR pointer (KPAD pos still reads 0,0), pitching gesture, swing timing.

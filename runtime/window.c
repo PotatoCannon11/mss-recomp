@@ -51,7 +51,6 @@ int gfx_window_init(int w, int h) {
     return 1;
 }
 
-static int swing_frames;
 
 void window_poll(void) {
     if (!win) return;
@@ -81,16 +80,9 @@ void window_poll(void) {
     g_pad.ir_x = ww ? 2.0f * mx / ww - 1.0f : 0;
     g_pad.ir_y = wh ? 2.0f * my / wh - 1.0f : 0;
     g_pad.ir_valid = 1;
-    if (k[44] && !swing_frames) swing_frames = 12;
-    if (swing_frames) {   /* a quick swing: strong acceleration sweeping across the remote's x axis */
-        float t = (12 - swing_frames) / 12.0f;
-        g_pad.acc_x = 3.5f * (t < 0.5f ? 1 : -1);
-        g_pad.acc_y = 0.0f;
-        g_pad.acc_z = 1.0f + 2.0f * (t < 0.5f ? 1 : -1);
-        swing_frames--;
-    } else {
-        g_pad.acc_x = 0; g_pad.acc_y = 0; g_pad.acc_z = 1;
-    }
+    static int space_was;
+    if (k[44] && !space_was && !g_pad.swing_t) wpad_start_swing();   /* Space: swing */
+    space_was = k[44];
 }
 
 void window_present(unsigned efb_tex, int sx, int sy, int sw, int sh, int efb_w, int efb_h) {

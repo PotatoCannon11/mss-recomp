@@ -9,7 +9,7 @@
 #define HLE(name) void FN_##name(CPU *c)
 #define STUB(name, val) HLE(name) { c->r[3] = (u32)(val); }
 
-HostPad g_pad = {.acc_z = 1.0f, .ir_valid = 1};
+HostPad g_pad = {.acc_z = 1.0f, .rest_z = 1.0f, .ir_valid = 1};
 
 static u32 connect_cb[4], ext_cb[4], sampling_cb[4], fmt[4];
 static int announced;
@@ -21,7 +21,7 @@ static void scripted_input(void) {
     const char *s = getenv("RT_INPUT");
     if (!s) return;
     u16 b = 0;
-    int swing = 0;
+    int swing = 0, pose = 0;
     while (*s) {
         unsigned long a = strtoul(s, (char **)&s, 10), z = a;
         if (*s == '-') z = strtoul(s + 1, (char **)&s, 10);
@@ -37,18 +37,37 @@ static void scripted_input(void) {
             case 'U': b |= 0x0008; break; case 'D': b |= 0x0004; break;
             case 'L': b |= 0x0001; break; case 'R': b |= 0x0002; break;
             case 'S': swing = 1; break;
+            case 'P': pose = 1; break; case 'Q': pose = -1; break;
             }
         }
         if (*s == ';') s++;
     }
     g_pad.buttons = b;
-    g_pad.acc_x = swing ? 3.5f : 0; g_pad.acc_z = swing ? 3.0f : 1.0f;
+    /* P / Q: hold the remote pointing up / down (gravity along the remote's length) instead of flat */
+    g_pad.rest_y = (float)pose; g_pad.rest_z = pose ? 0.0f : 1.0f;
+    if (swing && !g_pad.swing_t) wpad_start_swing();
+}
+
+/* a swing as the accelerometer sees it (in g, sampled per retrace): a fast sideways spike while the
+ * remote accelerates, a reversal as it stops, then back to resting (1 g on z) */
+static const float swing_x[] = {0.5f, 1.5f, 3.0f, 4.0f, 4.0f, 3.2f, 2.0f, 0.5f, -1.5f, -2.8f, -2.0f, -0.8f, 0.0f};
+static const float swing_y[] = {0.2f, 0.5f, 1.0f, 1.5f, 1.2f, 0.8f, 0.4f, 0.0f, -0.4f, -0.6f, -0.3f, 0.0f, 0.0f};
+static const float swing_z[] = {1.2f, 1.6f, 2.2f, 2.6f, 2.4f, 2.0f, 1.5f, 1.0f, 0.6f, 0.5f, 0.8f, 1.0f, 1.0f};
+#define SWING_N (int)(sizeof swing_x / sizeof *swing_x)
+void wpad_start_swing(void) { g_pad.swing_t = 1; }
+static void swing_step(void) {
+    if (!g_pad.swing_t) return;
+    int i = g_pad.swing_t - 1;
+    g_pad.acc_x = swing_x[i]; g_pad.acc_y = g_pad.rest_y + swing_y[i]; g_pad.acc_z = g_pad.rest_z + swing_z[i] - 1.0f;
+    if (++g_pad.swing_t > SWING_N) g_pad.swing_t = 0;
 }
 
 /* called on every VI retrace (interrupt context) */
 void wpad_tick(CPU *c) {
     ticks++;
     scripted_input();
+    g_pad.acc_x = 0; g_pad.acc_y = g_pad.rest_y; g_pad.acc_z = g_pad.rest_z;
+    swing_step();
     if (!announced) {
         announced = 1;
         if (connect_cb[0])
@@ -79,6 +98,8 @@ HLE(WPADSetConnectCallback) {
 HLE(WPADSetExtensionCallback) { s32 ch = (s32)c->r[3] & 3; u32 old = ext_cb[ch]; ext_cb[ch] = c->r[4]; c->r[3] = old; }
 HLE(WPADSetSamplingCallback) { s32 ch = (s32)c->r[3] & 3; u32 old = sampling_cb[ch]; sampling_cb[ch] = c->r[4]; c->r[3] = old; }
 HLE(WPADSetDataFormat) { fmt[c->r[3] & 3] = c->r[4]; c->r[3] = 0; }
+/* WPADGetDataFormat: KPAD only computes acceleration and pointer data for formats that carry them */
+HLE(fn_806022D0) { c->r[3] = fmt[c->r[3] & 3]; }
 STUB(WPADSetAutoSamplingBuf, 0)
 STUB(WPADControlMotor, 0)
 STUB(WPADControlLed, 0)
@@ -90,9 +111,13 @@ STUB(WPADSendStreamData, 0)
 STUB(WPADIsDpdEnabled, 1)
 STUB(WPADDisconnect, 0)
 STUB(WPADSaveConfig, 0)
+static u32 dpd_cmd[4];
+/* current DPD (pointer camera) mode, compared by KPAD against the mode it wants */
+HLE(fn_80604A64) { c->r[3] = dpd_cmd[c->r[3] & 3]; }
 HLE(WPADControlDpd) {
     u32 cb = c->r[5];
     s32 ch = (s32)c->r[3];
+    dpd_cmd[ch & 3] = c->r[4];
     guest_call(c, cb, (u32)ch, 0);
     c->r[3] = 0;
 }
@@ -133,6 +158,13 @@ HLE(WPADRead) {
             mw8(o + 6, (u8)k); /* traceID */
         }
     }
+    if (getenv("RT_PADLOG") && c->lr == 0x8050B6E0) {   /* debug: the game's KPADStatus for this channel */
+        u32 k = st - 1056;
+        fprintf(stderr, "pad t%llu swing%d raw %.2f %.2f %.2f kpad:", (unsigned long long)ticks, g_pad.swing_t, g_pad.acc_x, g_pad.acc_y, g_pad.acc_z);
+        for (int i = 0; i < 0x40; i += 4) fprintf(stderr, " %08X", mr32(k + i));
+        fprintf(stderr, " | kp idx %d cnt %d samplecb %08X\n", mr8(0x80784CD8 + 270), mr8(0x80784CD8 + 271), sampling_cb[0]);
+    }
+    if (getenv("RT_PADLOG") && c->lr != 0x8050B6E0 && ticks % 600 == 0) fprintf(stderr, "wpadread from %08X\n", c->lr);
     mw8(st + 0x28, 0);   /* dev: core */
     mw8(st + 0x29, 0);   /* err: none */
 }
