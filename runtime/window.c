@@ -112,5 +112,4 @@ void window_present(unsigned efb_tex, int sx, int sy, int sw, int sh, int efb_w,
     glBlitFramebuffer(sx, efb_h - sy, sx + sw, efb_h - (sy + sh), dx, dy + dh, dx + dw, dy, GL_COLOR_BUFFER_BIT, GL_LINEAR);
     (void)efb_w;
     SDL_GL_SwapWindow_(win);
-    window_poll();
 }

@@ -247,6 +247,7 @@ static int poll_irqs(CPU *c) {
         mw32(0x800000D4u, IRQ_CONTEXT);
         FN___VIRetraceHandler(c);
         mw32(0x800000D4u, IRQ_CONTEXT);
+        window_poll();   /* keep the window responsive even while the game presents no frames */
         wpad_tick(c);
         any = 1;
     }
