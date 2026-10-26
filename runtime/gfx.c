@@ -352,6 +352,7 @@ static GLuint get_prog(const PipeKey *k) {
 /* ---------------------------------------------------------------- textures */
 
 static u8 tmem_tlut[1 << 20];   /* TMEM: palettes are loaded here (BP 0x64/0x65), then indexed */
+static u64 tlut_gen;            /* bumped whenever palette contents change, so cached lookups recheck */
 
 typedef struct { u32 addr, fmt, w, h, tlut, hash; GLuint tex; int efb; u32 mode0; } TexEntry;
 static TexEntry texcache[4096];
@@ -464,12 +465,12 @@ static void bind_texture(int map) {
     u32 tlut_off = (tlutr & 0x3FF) << 9, tlut_fmt = (tlutr >> 10) & 3;
     GLuint *bound = tex_bound;
     /* fast path: the same texture registers already validated this frame (and no EFB copy since) */
-    struct Fast { u32 img0, img3, tlut, mode0; u64 frame, gen; TexEntry *e; };
+    struct Fast { u32 img0, img3, tlut, mode0; u64 frame, gen, tgen; TexEntry *e; };
     static struct Fast fast[1024];
     u32 fh = ((img3 * 2654435761u) ^ img0 ^ (tlutr << 7)) & 1023;
     struct Fast *fe = &fast[fh];
     TexEntry *e = NULL;
-    if (fe->e && fe->img0 == img0 && fe->img3 == img3 && fe->tlut == tlutr && fe->frame == g_gpu.frames && fe->gen == g_gpu.efb_gen)
+    if (fe->e && fe->img0 == img0 && fe->img3 == img3 && fe->tlut == tlutr && fe->frame == g_gpu.frames && fe->gen == g_gpu.efb_gen && fe->tgen == tlut_gen)
         e = fe->e;
     if (e) {
         if (bound[map] != e->tex) { glActiveTexture(GL_TEXTURE0 + map); glBindTexture(GL_TEXTURE_2D, e->tex); bound[map] = e->tex; }
@@ -516,7 +517,7 @@ static void bind_texture(int map) {
     }
     glBindTexture(GL_TEXTURE_2D, e->tex);
     bound[map] = e->tex;
-    *fe = (struct Fast){img0, img3, tlutr, mode0, g_gpu.frames, g_gpu.efb_gen, e};
+    *fe = (struct Fast){img0, img3, tlutr, mode0, g_gpu.frames, g_gpu.efb_gen, tlut_gen, e};
     if (e->mode0 == mode0 + 1) return;
 params:
     glActiveTexture(GL_TEXTURE0 + map);
@@ -533,8 +534,10 @@ void gfx_load_tlut(void) {
     u32 src = (g_gpu.bp[0x64] & 0xFFFFFF) << 5;
     u32 r = g_gpu.bp[0x65];
     u32 tmem = (r & 0x3FF) << 9, count = ((r >> 10) & 0x3FF) * 16 * 2;
-    if (tmem + count <= sizeof tmem_tlut && src + count < 0x14000000u)
+    if (tmem + count <= sizeof tmem_tlut && src + count < 0x14000000u && memcmp(tmem_tlut + tmem, MEM + src, count)) {
         memcpy(tmem_tlut + tmem, MEM + src, count);
+        tlut_gen++;
+    }
 }
 
 /* ---------------------------------------------------------------- uniforms */
