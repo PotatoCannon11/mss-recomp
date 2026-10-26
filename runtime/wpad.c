@@ -15,7 +15,8 @@ static u32 connect_cb[4], ext_cb[4], sampling_cb[4], fmt[4];
 static int announced;
 
 /* scripted input for testing without a window: RT_INPUT="from-to:KEYS;..." in retrace ticks
- * (60 per second). KEYS: A B 1 2 + - H (home) U D L R (d-pad) S (swing); e.g. "2200-2205:A" */
+ * (60 per second). KEYS: A B 1 2 + - H (home) U D L R (d-pad), S (swing), T / Y (overhand throw,
+ * either sign), P / Q (hold pointing up / down); e.g. "2200-2205:A" */
 static u64 ticks;
 static void scripted_input(void) {
     const char *s = getenv("RT_INPUT");
@@ -37,6 +38,7 @@ static void scripted_input(void) {
             case 'U': b |= 0x0008; break; case 'D': b |= 0x0004; break;
             case 'L': b |= 0x0001; break; case 'R': b |= 0x0002; break;
             case 'S': swing = 1; break;
+            case 'T': swing = 2; break; case 'Y': swing = 3; break;
             case 'P': pose = 1; break; case 'Q': pose = -1; break;
             }
         }
@@ -47,7 +49,7 @@ static void scripted_input(void) {
     g_pad.ir_valid = getenv("RT_IR") && sscanf(getenv("RT_IR"), "%f,%f", &g_pad.ir_x, &g_pad.ir_y) == 2;
     /* P / Q: hold the remote pointing up / down (gravity along the remote's length) instead of flat */
     g_pad.rest_y = (float)pose; g_pad.rest_z = pose ? 0.0f : 1.0f;
-    if (swing && !g_pad.swing_t) wpad_start_swing();
+    if (swing && !g_pad.swing_t) { wpad_start_swing(); g_pad.gesture = swing - 1; }
 }
 
 /* a swing as the accelerometer sees it (in g, sampled per retrace): a fast sideways spike while the
@@ -56,11 +58,20 @@ static const float swing_x[] = {0.5f, 1.5f, 3.0f, 4.0f, 4.0f, 3.2f, 2.0f, 0.5f, 
 static const float swing_y[] = {0.2f, 0.5f, 1.0f, 1.5f, 1.2f, 0.8f, 0.4f, 0.0f, -0.4f, -0.6f, -0.3f, 0.0f, 0.0f};
 static const float swing_z[] = {1.2f, 1.6f, 2.2f, 2.6f, 2.4f, 2.0f, 1.5f, 1.0f, 0.6f, 0.5f, 0.8f, 1.0f, 1.0f};
 #define SWING_N (int)(sizeof swing_x / sizeof *swing_x)
-void wpad_start_swing(void) { g_pad.swing_t = 1; }
+/* an overhand throw: the remote whips forward along its face axis while the arm's arc pulls along
+ * its length; added to the resting pose */
+static const float throw_y[] = {0.5f, 1.0f, 1.5f, 2.0f, 2.0f, 1.5f, 1.0f, 0.5f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+static const float throw_z[] = {-0.5f, -1.5f, -3.0f, -4.0f, -4.0f, -3.0f, -1.5f, 0.0f, 1.0f, 1.5f, 0.8f, 0.0f, 0.0f};
+void wpad_start_swing(void) { g_pad.swing_t = 1; g_pad.gesture = 0; }
 static void swing_step(void) {
     if (!g_pad.swing_t) return;
     int i = g_pad.swing_t - 1;
-    g_pad.acc_x = swing_x[i]; g_pad.acc_y = g_pad.rest_y + swing_y[i]; g_pad.acc_z = g_pad.rest_z + swing_z[i] - 1.0f;
+    if (g_pad.gesture == 0) {
+        g_pad.acc_x = swing_x[i]; g_pad.acc_y = g_pad.rest_y + swing_y[i]; g_pad.acc_z = g_pad.rest_z + swing_z[i] - 1.0f;
+    } else {
+        float sz = g_pad.gesture == 1 ? 1.0f : -1.0f;
+        g_pad.acc_x = 0; g_pad.acc_y = g_pad.rest_y + throw_y[i]; g_pad.acc_z = g_pad.rest_z + sz * throw_z[i];
+    }
     if (++g_pad.swing_t > SWING_N) g_pad.swing_t = 0;
 }
 

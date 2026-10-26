@@ -887,6 +887,8 @@ static void write_ppm(const char *dir, u64 frame, int sx, int sy, int w, int h) 
 }
 
 #include <time.h>
+static struct timespec g_start;
+__attribute__((constructor)) static void note_start(void) { clock_gettime(CLOCK_MONOTONIC, &g_start); }
 void gfx_present(int sx, int sy, int sw, int sh) {
     gfx_batch_flush();
     invalidate_gl_caches();
@@ -911,6 +913,15 @@ void gfx_present(int sx, int sy, int sw, int sh) {
         glPixelStorei(GL_PACK_ALIGNMENT, 1);
         glReadPixels(0, 0, EFB_W, EFB_H, GL_RGBA, GL_UNSIGNED_BYTE, frame_rgba);
         write_ppm(dir, g_gpu.frames, sx, sy, sw, sh);
+        /* wall-clock time of each dumped frame since startup, to line video up with RT_WAV audio */
+        static FILE *times;
+        if (!times) { char p[512]; snprintf(p, sizeof p, "%s/times.txt", dir); times = fopen(p, "w"); }
+        if (times) {
+            struct timespec t;
+            clock_gettime(CLOCK_MONOTONIC, &t);
+            fprintf(times, "%06llu %.4f\n", (unsigned long long)g_gpu.frames, (t.tv_sec - g_start.tv_sec) + (t.tv_nsec - g_start.tv_nsec) / 1e9);
+            fflush(times);
+        }
     }
     window_present(efb_color, sx, sy, sw, sh, EFB_W, EFB_H);
     glBindFramebuffer(GL_FRAMEBUFFER, efb_fbo);

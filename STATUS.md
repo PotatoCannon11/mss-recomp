@@ -57,3 +57,6 @@ Check in over SSH:
   hand cursor shows and highlights menu items. Contact sheet: build/pointer_works.png
 - Scripted runs keep the pointer off-screen unless RT_IR="x,y" is set (d-pad navigation).
 - Next: pitching gesture, swing timing, desktop input test.
+- Pitching: holding the remote pointing up (`P`) satisfies the "Pull up" prompt (Mario winds up,
+  prompt becomes "Throw"). A sideways swing does not count as a throw; testing an overhand throw
+  profile (`T` / `Y`, either sign of the forward axis).
