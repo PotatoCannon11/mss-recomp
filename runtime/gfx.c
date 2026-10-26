@@ -250,6 +250,8 @@ static void gen_fs(char **out, const PipeKey *k) {
         const char *dbg = getenv("RT_DEBUG_SHADE");
         if (dbg && !strcmp(dbg, "white")) A(" res = vec4(1.0);\n");
         else if (dbg && !strcmp(dbg, "col")) A(" res = vec4(v_col0.rgb, 1.0);\n");
+        else if (dbg && !strcmp(dbg, "alpha")) A(" res = vec4(res.aaa, 1.0);\n");
+        else if (dbg && !strcmp(dbg, "cola")) A(" res = vec4(v_col0.aaa, 1.0);\n");
         else if (dbg && !strcmp(dbg, "tex")) A(" res = vec4(texture(tex[%d], pj(v_tex[%d])).rgb, 1.0);\n", k->tref[0] & 7, (k->tref[0] >> 3) & 7);
     }
     {
@@ -260,7 +262,7 @@ static void gen_fs(char **out, const PipeKey *k) {
         char t0[64], t1[64];
         if (c0 == 0 || c0 == 7) snprintf(t0, sizeof t0, "%s", op[c0]); else snprintf(t0, sizeof t0, "(q8(res.a) %s alpharef.x)", op[c0]);
         if (c1 == 0 || c1 == 7) snprintf(t1, sizeof t1, "%s", op[c1]); else snprintf(t1, sizeof t1, "(q8(res.a) %s alpharef.y)", op[c1]);
-        if (!(c0 == 7 && c1 == 7))
+        if (!(c0 == 7 && c1 == 7) && !getenv("RT_NOALPHATEST"))
             A(" if (!((%s) %s (%s))) discard;\n", t0, lg[logic], t1);
     }
     {
@@ -567,12 +569,14 @@ static void apply_state(void) {
         glDisable(GL_CULL_FACE);
     else {
         glEnable(GL_CULL_FACE);
-        glFrontFace(GL_CCW);   /* GX culls back = clockwise in its y-down space, which is CCW after our flip */
+        glFrontFace(GL_CW);   /* GX front faces are clockwise in our clip space (verified against the attract-mode stadiums) */
         glCullFace(cull == 1 ? GL_BACK : cull == 2 ? GL_FRONT : GL_FRONT_AND_BACK);
     }
     u32 z = g_gpu.bp[0x40];
     static const GLenum zf[8] = {GL_NEVER, GL_LESS, GL_EQUAL, GL_LEQUAL, GL_GREATER, GL_NOTEQUAL, GL_GEQUAL, GL_ALWAYS};
-    if (z & 1) { glEnable(GL_DEPTH_TEST); glDepthFunc(zf[(z >> 1) & 7]); }
+    static int nodepth = -1;
+    if (nodepth < 0) nodepth = getenv("RT_NODEPTH") != NULL;
+    if ((z & 1) && !nodepth) { glEnable(GL_DEPTH_TEST); glDepthFunc(zf[(z >> 1) & 7]); }
     else glDisable(GL_DEPTH_TEST);
     glDepthMask((z >> 4) & 1);
     u32 b = g_gpu.bp[0x41];
@@ -585,6 +589,7 @@ static void apply_state(void) {
     } else
         glDisable(GL_BLEND);
     glColorMask((b >> 3) & 1, (b >> 3) & 1, (b >> 3) & 1, (b >> 4) & 1);
+    if (getenv("RT_FORCEMASK")) { glColorMask(1, 1, 1, 1); glDisable(GL_BLEND); }
     u32 s0 = g_gpu.bp[0x20], s1 = g_gpu.bp[0x21];
     int x0 = (int)((s0 >> 12) & 0x7FF) - 342, y0 = (int)(s0 & 0x7FF) - 342;
     int x1 = (int)((s1 >> 12) & 0x7FF) - 342, y1 = (int)(s1 & 0x7FF) - 342;
@@ -814,6 +819,7 @@ void gfx_efb_copy(u32 cmd) {
         glColorMask((pe >> 3) & 1, (pe >> 3) & 1, (pe >> 3) & 1, (pe >> 4) & 1);
         glDepthMask((g_gpu.bp[0x40] >> 4) & 1);
         glClearColor((ar & 255) / 255.f, ((gb >> 8) & 255) / 255.f, (gb & 255) / 255.f, ((ar >> 8) & 255) / 255.f);
+        if (getenv("RT_CLEARDEBUG")) glClearColor(1, 0, 1, 1);
         if (getenv("RT_CLEARDEBUG")) glClearColor(1, 0, 1, 1);
         glClearDepth((zv & 0xFFFFFF) / 16777215.0);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
