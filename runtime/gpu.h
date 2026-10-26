@@ -11,6 +11,7 @@ typedef struct {
     volatile int irq_finish, irq_token;
     u64 prims, frames;
     int bad_ops;
+    float creg[4][4], kreg[4][4];   /* TEV colour registers (PREV, C0-C2) and konst colours, -4..4 */
 } GPUState;
 extern GPUState g_gpu;
 
@@ -29,3 +30,9 @@ void gfx_draw(int prim, const GXVertex *v, u32 n);
 void gfx_efb_copy(u32 cmd);
 void gfx_flush(void);
 void gfx_load_tlut(void);
+void gfx_present(int sx, int sy, int sw, int sh);
+
+/* window / frontend (window.c) */
+int gfx_window_init(int w, int h);
+void window_present(unsigned efb_tex, int sx, int sy, int sw, int sh, int efb_w, int efb_h);
+void window_poll(void);

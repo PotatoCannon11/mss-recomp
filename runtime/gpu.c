@@ -226,8 +226,17 @@ static void load_bp(u32 v) {
     case 0x64: case 0x65:   /* TLUT load */
         if (reg == 0x65) gfx_load_tlut();
         break;
-    case 0x0F:   /* GEN_MODE / SU, nothing to do immediately */
+    case 0xE0: case 0xE1: case 0xE2: case 0xE3: case 0xE4: case 0xE5: case 0xE6: case 0xE7: {
+        /* TEV register pair: RA (even) or BG (odd); bit 23 selects konst vs colour register */
+        int i = (reg - 0xE0) >> 1, konst = (v >> 23) & 1;
+        float *d = konst ? g_gpu.kreg[i] : g_gpu.creg[i];
+        int lo = v & 0x7FF, hi = (v >> 12) & 0x7FF;
+        if (lo & 0x400) lo -= 0x800;
+        if (hi & 0x400) hi -= 0x800;
+        if (reg & 1) { d[2] = lo / 255.f; d[1] = hi / 255.f; }   /* B, G */
+        else { d[0] = lo / 255.f; d[3] = hi / 255.f; }           /* R, A */
         break;
+    }
     default:
         break;
     }
