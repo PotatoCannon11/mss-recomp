@@ -25,7 +25,7 @@ Running (from ~/mss-decomp/recomp):
 runs headless (set `RT_FRAMES=dir` to dump frames, `RT_WAV=file.wav` to record audio).
 
 Controls (Wii Remote): mouse = pointer, left/right click = A/B, arrows = d-pad, Z/X = 1/2,
-Enter = +, Backspace = -, H = HOME, Space = swing (batting) / pull up (pitching wind-up), C = throw (pitching), Esc = quit.
+The game runs in its native 16:9 widescreen mode (set `RT_43=1` for 4:3). Enter = +, Backspace = -, H = HOME, Space = swing (batting) / pull up (pitching wind-up), C = throw (pitching), Esc = quit.
 
 Debug knobs: `RT_TRACE`, `RT_HLELOG`, `RT_GFXLOG`, `RT_DUMP_AFTER=<s>` (thread dump),
 `RT_DETERMINISTIC` (virtual time, reproducible runs), `tools/hang.sh <s>` (guest stack of a hang).

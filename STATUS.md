@@ -89,3 +89,13 @@ Check in over SSH:
   (RMS 7214 vs 7247 / 8040 vs 7834, clipped samples 3/6 vs 3/5 per 5 s); Dolphin clips about
   100 samples per 5 s on the title music too, so the hot mix is the game's own, not the AX mixer's.
 - Fades to black between plays (~1 s) are the game's transitions, not dropped frames.
+- Renderer vs Dolphin: drove Dolphin's emulated remote with XTest (tools/xkey.c; keys bound in
+  WiimoteNew.ini, BackgroundInput on, configs restored afterwards) and grabbed its window from the
+  private X display. In the pitching-practice demo at Mario Stadium the render matches: grass,
+  dirt, shadows, wall, HUD, dialog. The visible difference was the aspect ratio: Dolphin's
+  SYSCONF is widescreen.
+- Widescreen by default: SYSCONF IPL.AR = 16:9 (patched into existing NANDs), window and RT_VIDEO
+  present at 16:9; the game switches to its 16:9 layouts and wider camera. RT_43=1 for 4:3.
+- RT_VIDEO stretches the 448-line image to the full frame like the VI (no black strip).
+- Clock: the Wii clock is local time (was UTC, so save times were 4 h off here).
+- Next: desktop play test (mouse pointer, Space/C gestures), more scene comparisons vs Dolphin.

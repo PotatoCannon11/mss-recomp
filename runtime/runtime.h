@@ -33,6 +33,7 @@ typedef struct {
     int gesture;            /* 0 swing, 1 / 2 overhand throw (either sign) */
     float rest_y, rest_z;   /* resting gravity (flat: 0,1; pointing up: 1,0) */
 } HostPad;
+extern int g_widescreen;   /* SYSCONF aspect is 16:9 (default; RT_43=1 for 4:3) */
 void wpad_start_swing(void);
 void wpad_start_gesture(int g);   /* 0 swing, 1 / 2 throw */
 extern HostPad g_pad;

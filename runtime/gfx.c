@@ -909,7 +909,8 @@ static void record_video(int sx, int sy, int sw, int sh) {
     if (!pipe_) {
         char cmd[1024];
         snprintf(cmd, sizeof cmd, "ffmpeg -loglevel error -y -f rawvideo -pix_fmt rgba -s %dx%d -r 60 -i - "
-                 "-vf vflip -c:v libx264 -preset veryfast -crf 20 -pix_fmt yuv420p '%s'", VID_W, VID_H, out);
+                 "-vf vflip,scale=%d:480 -c:v libx264 -preset veryfast -crf 20 -pix_fmt yuv420p '%s'", VID_W, VID_H,
+                 g_widescreen ? 854 : 640, out);
         if (!(pipe_ = popen(cmd, "w"))) { failed = 1; return; }
     }
     struct timespec t;
@@ -917,14 +918,16 @@ static void record_video(int sx, int sy, int sw, int sh) {
     double now = (t.tv_sec - g_start.tv_sec) + (t.tv_nsec - g_start.tv_nsec) / 1e9;
     if (now < next_t) return;   /* faster than 60 Hz: drop */
     if (sw > VID_W) sw = VID_W;
-    if (sh > VID_H) sh = VID_H;
-    memset(canvas, 0, sizeof canvas);
+    if (sh > EFB_H) sh = EFB_H;
+    /* read the presented region, then stretch it to the full canvas height like the VI does */
+    static u8 src[VID_W * EFB_H * 4];
     glBindFramebuffer(GL_READ_FRAMEBUFFER, efb_fbo);
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
     glPixelStorei(GL_PACK_ROW_LENGTH, VID_W);
-    /* bottom-aligned in GL's flipped space so the image sits at the top after vflip */
-    glReadPixels(sx, EFB_H - sy - sh, sw, sh, GL_RGBA, GL_UNSIGNED_BYTE, canvas + 4 * (VID_W * (VID_H - sh)));
+    glReadPixels(sx, EFB_H - sy - sh, sw, sh, GL_RGBA, GL_UNSIGNED_BYTE, src);
     glPixelStorei(GL_PACK_ROW_LENGTH, 0);
+    for (int y = 0; y < VID_H; y++)
+        memcpy(canvas + 4 * VID_W * y, src + 4 * VID_W * (y * sh / VID_H), 4 * VID_W);
     if (next_t == 0) { next_t = now; fprintf(stderr, "video: starts %.3f s after launch (offset for RT_WAV)\n", now); }
     int reps = 0;
     while (next_t <= now + 1e-6) { reps++; next_t += 1.0 / 60; }   /* fill the time this frame was shown */

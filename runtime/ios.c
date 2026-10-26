@@ -46,6 +46,23 @@ static void put_item(u8 *buf, u32 *off, u16 *offs, int *n, const char *name, int
     memcpy(buf + *off, data, len);
     *off += len;
 }
+/* display aspect: widescreen (the game renders 16:9 natively) unless RT_43; patched into an existing
+ * SYSCONF too, so the choice follows the switch */
+int g_widescreen;
+static void set_aspect(const char *path) {
+    g_widescreen = !ENV("RT_43");
+    FILE *f = fopen(path, "r+b");
+    if (!f) return;
+    static u8 buf[0x4000];
+    size_t n = fread(buf, 1, sizeof buf, f);
+    for (size_t i = 0; i + 7 < n; i++)
+        if (!memcmp(buf + i, "IPL.AR", 6) && buf[i - 1] == ((3 << 5) | 5)) {
+            fseek(f, (long)(i + 6), SEEK_SET);
+            fputc(g_widescreen, f);
+            break;
+        }
+    fclose(f);
+}
 static void write_default_sysconf(const char *path) {
     static u8 buf[0x4000];
     memset(buf, 0, sizeof buf);
@@ -109,6 +126,7 @@ void ios_init(void) {
     mkdirs(p);
     host_path("/shared2/sys/SYSCONF", p, sizeof p);
     if (access(p, F_OK)) write_default_sysconf(p);
+    set_aspect(p);
     host_path("/title/00000001/00000002/data", p, sizeof p);
     mkdirs(p);
     host_path("/title/00000001/00000002/data/setting.txt", p, sizeof p);

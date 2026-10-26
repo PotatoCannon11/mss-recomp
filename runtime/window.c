@@ -46,7 +46,7 @@ int gfx_window_init(int w, int h) {
     SDL_GL_SetAttribute_(18, 3);   /* MINOR */
     SDL_GL_SetAttribute_(21, 1);   /* PROFILE_MASK: core */
     SDL_GL_SetAttribute_(5, 1);    /* DOUBLEBUFFER */
-    win = SDL_CreateWindow_("Mario Super Sluggers", 0x2FFF0000, 0x2FFF0000, w * 2, h * 2 * 480 / 528, 0x2 | 0x20);
+    win = SDL_CreateWindow_("Mario Super Sluggers", 0x2FFF0000, 0x2FFF0000, ENV("RT_43") ? 960 : 1280, 720, 0x2 | 0x20);   /* before the NAND sets g_widescreen */
     if (!win || !SDL_GL_CreateContext_(win)) { fprintf(stderr, "window: %s\n", SDL_GetError_()); return 0; }
     SDL_GL_SetSwapInterval_(0);   /* pacing comes from the emulated VI */
     return 1;
@@ -100,9 +100,10 @@ void window_present(unsigned efb_tex, int sx, int sy, int sw, int sh, int efb_w,
     glDisable(GL_SCISSOR_TEST);
     glClearColor(0, 0, 0, 1);
     glClear(GL_COLOR_BUFFER_BIT);
-    /* keep 4:3, letterboxed */
-    int dw = ww, dh = ww * 3 / 4;
-    if (dh > wh) { dh = wh; dw = wh * 4 / 3; }
+    /* keep the game's aspect (16:9 or 4:3), letterboxed */
+    int an = g_widescreen ? 16 : 4, ad = g_widescreen ? 9 : 3;
+    int dw = ww, dh = ww * ad / an;
+    if (dh > wh) { dh = wh; dw = wh * an / ad; }
     int dx = (ww - dw) / 2, dy = (wh - dh) / 2;
     glBlitFramebuffer(sx, efb_h - sy, sx + sw, efb_h - (sy + sh), dx, dy + dh, dx + dw, dy, GL_COLOR_BUFFER_BIT, GL_LINEAR);
     (void)efb_w;

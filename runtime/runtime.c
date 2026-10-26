@@ -191,13 +191,16 @@ u32 ppc_mftb(CPU *c, int upper) {
         g_virtual_tb += upper ? 0 : 64;
         return upper ? (u32)(g_virtual_tb >> 32) : (u32)g_virtual_tb;
     }
-    /* the time base counts from 2000-01-01 (the Wii's epoch), so OSGetTime gives the real date */
+    /* the time base counts from 2000-01-01 local time (the Wii's epoch and clock), so OSGetTime gives
+     * the real date and time of day */
     static u64 epoch_offset;
     if (!epoch_offset) {
         struct timespec rt, mono;
         clock_gettime(CLOCK_REALTIME, &rt);
         clock_gettime(CLOCK_MONOTONIC, &mono);
-        epoch_offset = ((u64)rt.tv_sec - 946684800ull - (u64)mono.tv_sec) * TB_CLOCK;
+        struct tm lt;
+        localtime_r(&rt.tv_sec, &lt);
+        epoch_offset = ((u64)(rt.tv_sec + lt.tm_gmtoff) - 946684800ull - (u64)mono.tv_sec) * TB_CLOCK;
     }
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
