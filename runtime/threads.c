@@ -13,6 +13,7 @@
 #include <stdlib.h>
 #include <time.h>
 #include <pthread.h>
+#include <signal.h>
 #include <ucontext.h>
 #include "runtime.h"
 #include "names.h"
@@ -360,6 +361,10 @@ static void dump_threads(void) {
 extern volatile int g_prof_on;
 void prof_dump(void);
 
+/* kill -USR1 <pid>: thread dump from the timer thread (works on a live, detached run) */
+static volatile int dump_requested;
+static void on_usr1(int sig) { (void)sig; dump_requested = 1; }
+
 static void *timer_thread(void *arg) {
     (void)arg;
     const char *d = getenv("RT_DUMP_AFTER"), *pr = getenv("RT_PROFILE");
@@ -376,6 +381,7 @@ static void *timer_thread(void *arg) {
         clock_gettime(CLOCK_MONOTONIC, &t);
         ms = (t.tv_sec - t0.tv_sec) * 1000 + (t.tv_nsec - t0.tv_nsec) / 1000000;
         if (dump_ms >= 0 && ms >= dump_ms && !dumped) { dumped = 1; dump_threads(); }
+        if (dump_requested) { dump_requested = 0; dump_threads(); rt_backtrace(); }
         if (p0 >= 0 && ms >= p0 && pstate == 0) { pstate = 1; g_prof_on = 1; }
         if (p1 >= 0 && ms >= p1 && pstate == 1) { pstate = 2; g_prof_on = 0; prof_dump(); }
     }
@@ -389,6 +395,7 @@ void rt_timer_start(void) {
     }
     if (getenv("RT_NO_ASYNC"))
         return;   /* debugging: interrupts only at OS safe points */
+    signal(SIGUSR1, on_usr1);
     pthread_t t;
     pthread_create(&t, NULL, timer_thread, NULL);
 }

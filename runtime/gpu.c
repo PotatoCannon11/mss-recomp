@@ -304,6 +304,7 @@ static u32 run(const u8 *p, u32 len, int depth) {
             u32 n = (u32)p[i + 1] << 8 | p[i + 2];
             VtxFmt f;
             vtx_fmt(vat, &f);
+            g_gpu.cur_vat = vat;
             if (i + 3 + n * f.size > len) break;
             static GXVertex verts[65536];
             const u8 *q = p + i + 3;

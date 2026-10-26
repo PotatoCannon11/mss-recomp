@@ -10,8 +10,8 @@ typedef struct {
     u32 token;
     volatile int irq_finish, irq_token;
     u64 prims, frames;
-    int bad_ops;
-    u64 ndl;
+    int bad_ops, cur_vat;
+    u64 ndl, last_frame_draws, preloads;
     float creg[4][4], kreg[4][4];   /* TEV colour registers (PREV, C0-C2) and konst colours, -4..4 */
 } GPUState;
 extern GPUState g_gpu;

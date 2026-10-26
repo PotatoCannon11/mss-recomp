@@ -9,3 +9,10 @@ Check in over SSH:
 - Recompiled game boots natively on Linux: strap screen, save prompt, intro movie (video + audio),
   title screen ("PRESS A+B") and the in-game LOADING screen all render correctly.
 - Next: press A+B at the title, follow menus into a match; check audio clipping; controls.
+
+## 2026-10-26 midday
+- Reaches title, menus' LOADING screens and attract-mode 3D gameplay (HUD, players, stadiums).
+- KNOWN BUG (desktop window run): pressing to start during the intro movie froze the game
+  (main thread 100% CPU, guest spin). Not reproducible headless with scripted presses — suspect the
+  live-input / SDL window / audio path. Debug: `kill -USR1 <pid>` prints a guest thread dump.
+- Renderer: 3D field + stadium background render black; EFB copies now format-converted (shadows).

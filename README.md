@@ -16,5 +16,16 @@ Layout
 - `runtime/wpad.c` – Wii Remote from host input
 - `runtime/gpu.c`, `gfx.c` – GX command stream decoding and the OpenGL renderer
 
+Running (from ~/mss-decomp/recomp):
+
+    ./build/mss ../repo/orig/RMBE01/sys/main.dol ../game
+
+`../game` is the disc extracted with `dtk disc extract <your .wbfs> ../game`. Saves go to
+`~/.local/share/mss-recomp/nand`. With a desktop session it opens a window (SDL2); without one it
+runs headless (set `RT_FRAMES=dir` to dump frames, `RT_WAV=file.wav` to record audio).
+
+Controls (Wii Remote): mouse = pointer, left/right click = A/B, arrows = d-pad, Z/X = 1/2,
+Enter = +, Backspace = -, H = HOME, Space = swing, Esc = quit.
+
 Debug knobs: `RT_TRACE`, `RT_HLELOG`, `RT_GFXLOG`, `RT_DUMP_AFTER=<s>` (thread dump),
 `RT_DETERMINISTIC` (virtual time, reproducible runs), `tools/hang.sh <s>` (guest stack of a hang).
