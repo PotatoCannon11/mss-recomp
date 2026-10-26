@@ -16,19 +16,27 @@ static int announced;
 
 /* scripted input for testing without a window: RT_INPUT="from-to:KEYS;..." in retrace ticks
  * (60 per second). KEYS: A B 1 2 + - H (home) U D L R (d-pad), S (swing), T / Y (overhand throw,
- * either sign), P / Q (hold pointing up / down); e.g. "2200-2205:A" */
+ * either sign), P / Q (hold pointing up / down), @x,y (point at x,y in -1..1); e.g. "2200-2205:A" */
 static u64 ticks;
 static void scripted_input(void) {
     const char *s = ENV("RT_INPUT");
     if (!s) return;
     u16 b = 0;
-    int swing = 0, pose = 0;
+    int swing = 0, pose = 0, ptr = 0;
+    float px = 0, py = 0;
     while (*s) {
         unsigned long a = strtoul(s, (char **)&s, 10), z = a;
         if (*s == '-') z = strtoul(s + 1, (char **)&s, 10);
         if (*s == ':') s++;
         int on = ticks >= a && ticks <= z;
         for (; *s && *s != ';'; s++) {
+            if (*s == '@') {   /* @x,y: point at x,y (-1..1) */
+                float x = strtof(s + 1, (char **)&s), y = 0;
+                if (*s == ',') y = strtof(s + 1, (char **)&s);
+                if (on) { ptr = 1; px = x; py = y; }
+                s--;
+                continue;
+            }
             if (!on) continue;
             switch (*s) {
             case 'A': b |= 0x0800; break; case 'B': b |= 0x0400; break;
@@ -48,6 +56,7 @@ static void scripted_input(void) {
     g_pad.buttons = b;
     /* pointer, -1..1; without RT_IR it points off-screen so scripts navigate with the d-pad */
     g_pad.ir_valid = ENV("RT_IR") && sscanf(ENV("RT_IR"), "%f,%f", &g_pad.ir_x, &g_pad.ir_y) == 2;
+    if (ptr) { g_pad.ir_valid = 1; g_pad.ir_x = px; g_pad.ir_y = py; }
     /* P / Q: hold the remote pointing up / down (gravity along the remote's length) instead of flat */
     g_pad.rest_y = (float)pose; g_pad.rest_z = pose ? 0.0f : 1.0f;
     if (swing && !g_pad.swing_t) { wpad_start_swing(); g_pad.gesture = swing - 1; }

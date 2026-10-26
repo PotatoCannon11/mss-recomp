@@ -105,3 +105,14 @@ Check in over SSH:
 - Open: the menu hand cursor follows the mouse for the first couple of moves at file select, then
   stays put, although KPAD's pointer keeps tracking (pos and dpd_valid=2 in RT_PADLOG). The game's
   own cursor logic (KPAD pos is read via fn_8050C15C) needs a look. The d-pad works meanwhile.
+
+## 2026-10-26 night (2)
+- Pointer re-checked: NOT a bug. Over 32 mouse glides in the SDL window, KPAD's pointer tracked
+  every move (dpd_valid=2 throughout) and the P1 star moved between cards. Dolphin behaves the same
+  with the same XTest moves. The "stuck" frames last time were grabs taken mid-animation.
+- RT_INPUT gains `@x,y` (point at x,y in -1..1 for that tick range) for scripted pointer menus.
+- State: boot -> menus (pointer or d-pad) -> exhibition match with batting + pitching at 60 fps,
+  16:9, audio matching Dolphin. Controls: mouse = pointer, left/right click = A/B, Space = swing /
+  pull up, C = throw, arrows = d-pad, Enter = +.
+- Next: fielding/baserunning controls check, more Dolphin scene comparisons (other stadiums,
+  minigames), then cleanup toward readable C/modding.
