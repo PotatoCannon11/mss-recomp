@@ -128,3 +128,12 @@ Check in over SSH:
   Wario intro, gem cannon, catches and combos, "Clear!" at 1150/1000 points. build/minigame_gem_catch.png
   (The rules pop-up closes with B, not A, on its last page: game design, not a bug.)
 - Next: baserunning input in a batting half; Challenge mode entry; desktop play test.
+
+## 2026-10-26 evening (late)
+- Challenge mode starts: story intro (Toadsworth dialogue over the island, Bowser wipe).
+- OPEN: rare host crash (SIGSEGV, null address) ~2.5 min into Challenge mode, 2 of 7 identical
+  runs (both with RT_VIDEO+RT_WAV; none of 3 with the -g build). It happens while the game idles in
+  its prio-24 worker loop (fn_8025F480), i.e. inside interrupt delivery; the guest regs in the report
+  are g_cpu and don't say which host thread faulted. The fault handler now prints host rip/rsp and a
+  native backtrace (addr2line with -g builds), to catch it next time.
+- Next: catch the crash with the new report and fix it; then baserunning input.

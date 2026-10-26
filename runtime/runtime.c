@@ -3,6 +3,8 @@
 #include <fcntl.h>
 #include <signal.h>
 #include <stdio.h>
+#include <ucontext.h>
+#include <execinfo.h>
 #include <stdlib.h>
 #include <sys/mman.h>
 #include <time.h>
@@ -446,12 +448,19 @@ void rt_backtrace(void) {
 CPU g_cpu;
 
 static void on_segv(int sig, siginfo_t *si, void *uc) {
-    (void)uc;
     u8 *a = (u8 *)si->si_addr;
     if (a >= MEM && a < MEM + (1ull << 32))
         fprintf(stderr, "guest memory fault at %08X\n", (u32)(a - MEM));
     else
         fprintf(stderr, "host fault (signal %d) at %p\n", sig, si->si_addr);
+    /* where in the host code: the faulting instruction, then the native call chain */
+    extern char __executable_start;
+    greg_t *g = ((ucontext_t *)uc)->uc_mcontext.gregs;
+    fprintf(stderr, "host rip %llx rsp %llx (binary base %p; resolve with addr2line -e build/mss -f <rip-base>)\n",
+            (unsigned long long)g[REG_RIP], (unsigned long long)g[REG_RSP], (void *)&__executable_start);
+    void *bt[32];
+    int n = backtrace(bt, 32);
+    backtrace_symbols_fd(bt, n, 2);
     rt_backtrace();
     signal(sig, SIG_DFL);
     raise(sig);
