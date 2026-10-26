@@ -39,3 +39,6 @@ Check in over SSH:
 - Live gameplay renders correctly with batching: PLAY BALL, pitches, hits, fielding cameras.
 - Tools: RT_FPS, RT_THREADPROF (guest thread time), RT_HOSTPROF (+_FROM frame) + tools/hostprof.py.
 - Next: confirm hardware frame rate in Dolphin; vertex decode speed; desktop input test.
+- Live match plays: batting as Mario (Swing prompt, pitches, count, outs) -> CHANGE SIDES ->
+  scoreboard -> pitching. Contact sheet: build/live_gameplay.png
+- Open: does the swing gesture register (outs may be strikeouts)? which button skips tutorials?
