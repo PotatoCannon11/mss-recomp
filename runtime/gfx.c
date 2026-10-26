@@ -682,6 +682,21 @@ void gfx_draw(int prim, const GXVertex *v, u32 n) {
         glDrawElements(GL_TRIANGLES, m, GL_UNSIGNED_INT, 0);
     } else
         glDrawArrays(mode[prim], 0, n);
+    static int pick_x = -1, pick_y;
+    if (pick_x == -1) { const char *pk = getenv("RT_PICK"); pick_x = -2; if (pk) sscanf(pk, "%d,%d", &pick_x, &pick_y); }
+    if (pick_x >= 0 && (long)g_gpu.frames == dump_frame) {
+        static u8 last[4];
+        u8 px[4];
+        glReadPixels(pick_x, EFB_H - 1 - pick_y, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, px);
+        if (memcmp(px, last, 4)) {
+            fprintf(stderr, "PICK draw %llu -> %02X%02X%02X%02X  stages:", (unsigned long long)draws, px[0], px[1], px[2], px[3]);
+            for (int st = 0; st < ns; st++)
+                fprintf(stderr, " [c %06X a %06X tref %03X ksel %06X]", k.tev_c[st], k.tev_a[st], (k.tref[st >> 1] >> ((st & 1) * 12)) & 0xFFF, k.ksel[st >> 1]);
+            fprintf(stderr, " colctl %08X/%08X texgen0 %08X kreg0 %.2f %.2f %.2f %.2f creg1 %.2f %.2f %.2f matc %08X amb %08X\n", k.colctl[0], k.colctl[2], k.texgen[0],
+                    g_gpu.kreg[0][0], g_gpu.kreg[0][1], g_gpu.kreg[0][2], g_gpu.kreg[0][3], g_gpu.creg[1][0], g_gpu.creg[1][1], g_gpu.creg[1][2], g_gpu.xfreg[0x0C], g_gpu.xfreg[0x0A]);
+            memcpy(last, px, 4);
+        }
+    }
 }
 
 /* ---------------------------------------------------------------- EFB copies and frames */

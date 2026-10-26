@@ -16,3 +16,11 @@ Check in over SSH:
   (main thread 100% CPU, guest spin). Not reproducible headless with scripted presses — suspect the
   live-input / SDL window / audio path. Debug: `kill -USR1 <pid>` prints a guest thread dump.
 - Renderer: 3D field + stadium background render black; EFB copies now format-converted (shadows).
+
+## 2026-10-26 afternoon
+- Fixed: GX front-face winding (sky domes / stadium geometry were culled) -> attract-mode stadiums
+  now render correctly (Yoshi Park, city stadium: sky, grass, shadows, logos). Screenshot:
+  build/latest_yoshi_park.png
+- Desktop "crash": likely the window stopped responding while no frames were presented; window
+  events are now pumped every retrace. Still unconfirmed — retry on the desktop.
+- Next: navigate title -> menus -> exhibition match with scripted input; then controls/swing mapping.
