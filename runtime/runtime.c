@@ -363,9 +363,23 @@ void coverage_dump(void) {
 }
 void trace_enter(u32 addr, u32 lr) {
     ring[ring_pos++ % RING] = addr;
+    if (addr == 0x802530CCu && lr == 0x8015B264u && ENV("RT_MOTLOG")) {   /* pitch/bat input snapshot just filled */
+        u32 s = g_cpu.r[31];
+        static u8 last[12];
+        u8 cur[12];
+        for (int i = 0; i < 12; i++) cur[i] = mr8(s + i);
+        if (memcmp(cur, last, 12)) {
+            fprintf(stderr, "mot f%llu @%08X:", (unsigned long long)g_gpu.frames, s);
+            for (int i = 0; i < 12; i++) fprintf(stderr, " %02X", cur[i]);
+            fprintf(stderr, "\n");
+            memcpy(last, cur, 12);
+        }
+    }
     static int cov = -1;
     if (cov < 0) { cov = ENV("RT_COVERAGE") != NULL; if (cov) coverage = calloc(1 << 22, 1); }
-    if (cov) coverage[((addr - 0x80000000u) >> 2) & 0x3FFFFF] = 1;
+    static long cov_from = -1;
+    if (cov_from < 0) cov_from = ENV("RT_COVERAGE_FROM") ? atol(ENV("RT_COVERAGE_FROM")) : 0;   /* first frame to record */
+    if (cov && (long)g_gpu.frames >= cov_from) coverage[((addr - 0x80000000u) >> 2) & 0x3FFFFF] = 1;
     if (nlogcall < 0) logcall_init();
     for (int i = 0; i < nlogcall; i++)
         if (logcall[i] == addr) {

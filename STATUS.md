@@ -76,3 +76,12 @@ Check in over SSH:
   Practice can be skipped with + (pause in a match; A resumes).
 - Next: pin down the throw detector (callers of fn_8050C034: fn_801CB44C, fn_8024A69C,
   fn_805163F8), then a desktop play test.
+
+## 2026-10-26 evening
+- MILESTONE: pitching works -> full innings play out: Mario winds up and throws, CPU batters hit,
+  fielders make outs, CHANGE SIDES, next inning (build/pitching_works.png, from build/v14.mp4).
+- How: the throw is matched by fn_801649B0: in the motion-direction history (fn_805163F8 buckets
+  the normalised KPAD acc into 26 directions), an earlier segment must have KPAD z- or y+ and a later
+  one z+ without y+ (patterns at 0x80643770, axis bitmask table 0x80628398). T now produces that.
+- Desktop keys: Space = swing / pull up, C = throw.
+- Next: desktop play test; check the occasional black frame in recordings; renderer vs Dolphin.

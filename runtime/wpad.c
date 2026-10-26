@@ -39,7 +39,7 @@ static void scripted_input(void) {
             case 'L': b |= 0x0001; break; case 'R': b |= 0x0002; break;
             case 'S': swing = 1; break;
             case 'T': swing = 2; break; case 'Y': swing = 3; break;
-            default: if (*s >= 'a' && *s <= 'h') swing = 4 + (*s - 'a'); break;   /* probe bursts */
+            default: if (*s >= 'a' && *s <= 'n') swing = 4 + (*s - 'a'); break;   /* probe bursts */
             case 'P': pose = 1; break; case 'Q': pose = -1; break;
             }
         }
@@ -59,11 +59,14 @@ static const float swing_x[] = {0.5f, 1.5f, 3.0f, 4.0f, 4.0f, 3.2f, 2.0f, 0.5f, 
 static const float swing_y[] = {0.2f, 0.5f, 1.0f, 1.5f, 1.2f, 0.8f, 0.4f, 0.0f, -0.4f, -0.6f, -0.3f, 0.0f, 0.0f};
 static const float swing_z[] = {1.2f, 1.6f, 2.2f, 2.6f, 2.4f, 2.0f, 1.5f, 1.0f, 0.6f, 0.5f, 0.8f, 1.0f, 1.0f};
 #define SWING_N (int)(sizeof swing_x / sizeof *swing_x)
-/* a downward swing (pitching "Throw: swing down"): a strong drop along the face axis while the arm
- * accelerates, then the jolt of stopping; added to the resting pose (T, or Y with z mirrored) */
-static const float throw_y[] = {0.3f, 0.6f, 1.0f, 1.2f, 1.0f, 0.6f, 0.3f, 0.0f, -0.3f, -0.4f, -0.2f, 0.0f, 0.0f};
-static const float throw_z[] = {-1.0f, -2.0f, -3.0f, -3.5f, -3.5f, -3.0f, -2.0f, -0.5f, 1.5f, 2.5f, 2.0f, 1.0f, 0.0f};
+/* a downward swing (pitching "Throw: swing down"), shaped for the game's two-step matcher
+ * (fn_801649B0 with patterns at 0x80643770): first a strong drop along the face axis (KPAD y+), then a
+ * push along the remote's length toward the tip (KPAD z+, no y+); added to the resting pose
+ * (T, or Y with the face axis mirrored) */
+static const float throw_y[] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.5f, 3.0f, 3.5f, 3.0f, 2.0f, 0.8f, 0.0f};
+static const float throw_z[] = {-1.5f, -3.0f, -3.5f, -3.5f, -3.0f, -2.0f, 0.0f, 0.3f, 0.5f, 0.3f, 0.0f, 0.0f, 0.0f};
 void wpad_start_swing(void) { g_pad.swing_t = 1; g_pad.gesture = 0; }
+void wpad_start_gesture(int g) { g_pad.swing_t = 1; g_pad.gesture = g; }
 static void swing_step(void) {
     if (!g_pad.swing_t) return;
     int i = g_pad.swing_t - 1;
@@ -73,9 +76,17 @@ static void swing_step(void) {
         static const float bell[] = {0.2f, 0.5f, 0.8f, 1.0f, 1.0f, 0.8f, 0.5f, 0.2f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
         int m = g_pad.gesture - 3;
         float b = 3.0f * bell[i];
-        g_pad.acc_x = (m & 1 ? -b : b);
-        g_pad.acc_y = g_pad.rest_y + (m & 2 ? -b : b);
-        g_pad.acc_z = g_pad.rest_z + (m & 4 ? -b : b);
+        if (m < 8) {   /* a-h: diagonals */
+            g_pad.acc_x = (m & 1 ? -b : b);
+            g_pad.acc_y = g_pad.rest_y + (m & 2 ? -b : b);
+            g_pad.acc_z = g_pad.rest_z + (m & 4 ? -b : b);
+        } else {       /* i-n: +x -x +y -y +z -z */
+            int ax = (m - 8) / 2;
+            float v = (m - 8) & 1 ? -b : b;
+            g_pad.acc_x = ax == 0 ? v : 0;
+            g_pad.acc_y = g_pad.rest_y + (ax == 1 ? v : 0);
+            g_pad.acc_z = g_pad.rest_z + (ax == 2 ? v : 0);
+        }
     } else {
         float sz = g_pad.gesture == 1 ? 1.0f : -1.0f;
         g_pad.acc_x = 0; g_pad.acc_y = g_pad.rest_y + throw_y[i]; g_pad.acc_z = g_pad.rest_z + sz * throw_z[i];

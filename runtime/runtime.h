@@ -34,6 +34,7 @@ typedef struct {
     float rest_y, rest_z;   /* resting gravity (flat: 0,1; pointing up: 1,0) */
 } HostPad;
 void wpad_start_swing(void);
+void wpad_start_gesture(int g);   /* 0 swing, 1 / 2 throw */
 extern HostPad g_pad;
 void wpad_tick(CPU *c);
 void rt_timer_start(void);

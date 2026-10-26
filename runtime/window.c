@@ -5,7 +5,8 @@
  *   mouse            pointer           left / right button   A / B
  *   arrow keys       d-pad             Z / X                 1 / 2
  *   Enter            +                 Backspace             -
- *   H                HOME              Space                 swing (shake)
+ *   H                HOME              Space                 swing / pitch wind-up (pull up)
+ *   C                pitch: throw (swing down)
  *   Esc              quit */
 #define GL_GLEXT_PROTOTYPES
 #include <GL/gl.h>
@@ -80,9 +81,11 @@ void window_poll(void) {
     g_pad.ir_x = ww ? 2.0f * mx / ww - 1.0f : 0;
     g_pad.ir_y = wh ? 2.0f * my / wh - 1.0f : 0;
     g_pad.ir_valid = 1;
-    static int space_was;
+    static int space_was, c_was;
     if (k[44] && !space_was && !g_pad.swing_t) wpad_start_swing();   /* Space: swing */
+    if (k[6] && !c_was && !g_pad.swing_t) wpad_start_gesture(1);     /* C: pitch throw */
     space_was = k[44];
+    c_was = k[6];
 }
 
 void window_present(unsigned efb_tex, int sx, int sy, int sw, int sh, int efb_w, int efb_h) {
