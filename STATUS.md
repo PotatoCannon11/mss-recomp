@@ -124,3 +124,7 @@ Check in over SSH:
 - Fielding works in practice: hits get fielded and outs recorded (the remote stays at rest).
 - Next: try the remaining unlocked parks and a minigame; check baserunning input (B/+?) in a
   batting half; compare one Yoshi Park frame against Dolphin.
+- Minigame: Gem Catch plays start to finish (Minigames -> stage -> Yoshi -> Easy -> Start):
+  Wario intro, gem cannon, catches and combos, "Clear!" at 1150/1000 points. build/minigame_gem_catch.png
+  (The rules pop-up closes with B, not A, on its last page: game design, not a bug.)
+- Next: baserunning input in a batting half; Challenge mode entry; desktop play test.
