@@ -116,3 +116,11 @@ Check in over SSH:
   pull up, C = throw, arrows = d-pad, Enter = +.
 - Next: fielding/baserunning controls check, more Dolphin scene comparisons (other stadiums,
   minigames), then cleanup toward readable C/modding.
+
+## 2026-10-26 late
+- Second stadium: Yoshi Park (stage select, Right) loads and plays a full exhibition: intro,
+  pitching practice, live pitching with outs, fielding cameras, CPU batting. Render clean at
+  full resolution (mound texture, glow rings, HUD transparency, shadows). build/yoshi_park.png
+- Fielding works in practice: hits get fielded and outs recorded (the remote stays at rest).
+- Next: try the remaining unlocked parks and a minigame; check baserunning input (B/+?) in a
+  batting half; compare one Yoshi Park frame against Dolphin.
