@@ -14,6 +14,7 @@ static const char *g_disc_root;
 
 void hle_init(const char *disc_root) {
     g_disc_root = disc_root;
+    ios_init();
     if (disc_root && disc_init(disc_root)) {
         u32 at = disc_load_fst();
         mw32(0x80000038u, at);              /* BootInfo->FSTLocation */
@@ -51,17 +52,12 @@ STUB(EXIDetach, 1)
 
 /* ---- OSInit: hardware bring-up the host does not need */
 HLE(__OSInitAudioSystem) { (void)c; }      /* DSP boot + AI setup */
-HLE(__OSInitSTM) { (void)c; }              /* IOS state-transition manager (power/reset buttons) */
 HLE(__OSInitNet) { (void)c; }
 HLE(__OSStartPlayRecord) { (void)c; }
 HLE(__OSInitSram) { (void)c; }             /* RTC SRAM over EXI */
 HLE(EnableMetroTRKInterrupts) { (void)c; }
 HLE(SIInit) { (void)c; }                   /* GameCube controller serial bus */
-HLE(IPCCltInit) { c->r[3] = 0; }
 
-/* ---- IOS IPC: no devices yet; every open fails with IPC_ENOENT */
-HLE(IOS_Open) { LOG("IOS_Open(%s)\n", (char *)MEM + c->r[3]); c->r[3] = (u32)-6; }
-HLE(IOS_OpenAsync) { LOG("IOS_OpenAsync(%s)\n", (char *)MEM + c->r[3]); c->r[3] = (u32)-6; }
 
 /* ---- DVD: the SDK's file layer (DVDOpen, FST lookup) runs as recompiled code; the drive is ours */
 void FN___DVDFSInit(CPU *c);
@@ -108,3 +104,47 @@ HLE(__AXOutInitDSP) { (void)c; }     /* boots the AX microcode and waits for it 
 /* ---- GX: the command stream is decoded as it is written; drain it where GX waits on the GPU */
 #include "gpu.h"
 void FN_GXDrawDone(CPU *c);
+
+/* ---- debug output: the game's OSReport / OSPanic go to the terminal */
+static void guest_printf(CPU *c, u32 fmt, int argi, char *out, size_t n) {
+    const char *f = (const char *)MEM + fmt;
+    int fi = 1;
+    size_t o = 0;
+    while (*f && o + 64 < n) {
+        if (*f != '%') { out[o++] = *f++; continue; }
+        char spec[32];
+        int k = 0;
+        spec[k++] = *f++;
+        while (*f && strchr("-+ #0123456789.lhz", *f) && k < 28) spec[k++] = *f++;
+        char conv = *f ? *f++ : 0;
+        spec[k++] = conv;
+        spec[k] = 0;
+        char clean[32];
+        int m = 0;
+        for (int i = 0; i < k; i++) if (spec[i] != 'l' && spec[i] != 'h' && spec[i] != 'z') clean[m++] = spec[i];
+        clean[m] = 0;
+        u32 v = argi <= 10 ? c->r[argi] : 0;
+        switch (conv) {
+        case 'd': case 'i': o += snprintf(out + o, n - o, clean, (int)v); argi++; break;
+        case 'u': case 'x': case 'X': case 'o': case 'c': o += snprintf(out + o, n - o, clean, v); argi++; break;
+        case 'p': o += snprintf(out + o, n - o, "%08X", v); argi++; break;
+        case 's': { char s2[256]; snprintf(s2, sizeof s2, "%s", v ? (const char *)MEM + v : "(null)"); o += snprintf(out + o, n - o, clean, s2); argi++; break; }
+        case 'f': case 'g': case 'e': o += snprintf(out + o, n - o, clean, fi <= 8 ? c->f[fi] : 0.0); fi++; break;
+        case '%': out[o++] = '%'; break;
+        default: break;
+        }
+    }
+    out[o] = 0;
+}
+HLE(OSReport) {
+    char buf[2048];
+    guest_printf(c, c->r[3], 4, buf, sizeof buf);
+    fprintf(stderr, "[game] %s", buf);
+}
+HLE(OSPanic) {
+    char buf[2048];
+    guest_printf(c, c->r[5], 6, buf, sizeof buf);
+    fprintf(stderr, "[game] PANIC %s:%d: %s\n", (const char *)MEM + c->r[3], (int)c->r[4], buf);
+    rt_backtrace();
+    exit(1);
+}

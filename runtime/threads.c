@@ -194,6 +194,9 @@ static int poll_irqs(CPU *c) {
         FN_GXFinishInterruptHandler(c);
         any = 1;
     }
+    mw32(0x800000D4u, IRQ_CONTEXT);
+    if (ios_deliver(c))   /* IPC replies */
+        any = 1;
     if (now >= vi_next) {
         vi_next += VI_PERIOD;
         if (vi_next < now)
@@ -325,7 +328,7 @@ void rt_async_irq(CPU *c) {
     if (in_irq || !(c->msr & 0x8000u) || mr32(0x800000E4u) == 0)
         return;
     u64 now = now_tb();
-    if (!(now >= vi_next || (dec_armed && now >= dec_deadline) || g_gpu.irq_finish || g_gpu.irq_token))
+    if (!(now >= vi_next || (dec_armed && now >= dec_deadline) || g_gpu.irq_finish || g_gpu.irq_token || ios_pending()))
         return;
     CPU save = *c;
     if (poll_irqs(c))

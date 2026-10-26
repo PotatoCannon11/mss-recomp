@@ -33,3 +33,6 @@ typedef struct {
 extern HostPad g_pad;
 void wpad_tick(CPU *c);
 void rt_timer_start(void);
+void ios_init(void);
+int ios_deliver(CPU *c);
+int ios_pending(void);
