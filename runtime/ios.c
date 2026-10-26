@@ -199,16 +199,27 @@ static s32 do_close(s32 fd) {
     return 0;
 }
 
+/* stdio transfers that survive signals (EINTR leaves a short count and the error flag set) */
+static size_t full_io(void *p, size_t len, FILE *f, int wr) {
+    size_t done = 0;
+    while (done < len) {
+        size_t k = wr ? fwrite((u8 *)p + done, 1, len - done, f) : fread((u8 *)p + done, 1, len - done, f);
+        done += k;
+        if (done == len || !ferror(f) || errno != EINTR) break;
+        clearerr(f);
+    }
+    return done;
+}
 static s32 do_read(s32 fd, u32 buf, u32 len) {
     Fd *f = getfd(fd);
     LOG("ios: read fd %d (%s) %u bytes\n", fd, f ? f->path : "?", len);
     if (!f || f->kind != 2) return IPC_EINVAL;
-    return (s32)fread(MEM + buf, 1, len, f->f);
+    return (s32)full_io(MEM + buf, len, f->f, 0);
 }
 static s32 do_write(s32 fd, u32 buf, u32 len) {
     Fd *f = getfd(fd);
     if (!f || f->kind != 2) return IPC_EINVAL;
-    s32 n = (s32)fwrite(MEM + buf, 1, len, f->f);
+    s32 n = (s32)full_io(MEM + buf, len, f->f, 1);
     fflush(f->f);
     return n;
 }

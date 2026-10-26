@@ -13,6 +13,7 @@ typedef struct {
     int bad_ops, cur_vat;
     u64 ndl, last_frame_draws, preloads, efb_gen;
     int udirty;            /* XF / TEV register state changed since the last uniform fill */
+    u32 xf_lo, xf_hi;      /* xfmem words changed since then (none: xf_lo = ~0, xf_hi = 0) */
     u32 state_epoch;       /* bumped when GL state was changed outside apply_state */
     float creg[4][4], kreg[4][4];   /* TEV colour registers (PREV, C0-C2) and konst colours, -4..4 */
 } GPUState;

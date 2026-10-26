@@ -24,14 +24,22 @@ static void on_prof(int sig, siginfo_t *si, void *ctx) {
     static long from = -1;
     if (from < 0) from = ENV("RT_HOSTPROF_FROM") ? atol(ENV("RT_HOSTPROF_FROM")) : 0;
     if ((long)g_gpu.frames < from) return;
+    static long min_draws = -1;   /* RT_HOSTPROF_DRAWS=n: only sample while the previous frame had >= n draws */
+    if (min_draws < 0) min_draws = ENV("RT_HOSTPROF_DRAWS") ? atol(ENV("RT_HOSTPROF_DRAWS")) : 0;
+    if ((long)g_gpu.last_frame_draws < min_draws) return;
     if (nsamples < MAXS) {
         callers[nsamples] = *(unsigned long *)uc->uc_mcontext.gregs[REG_RSP];
         samples[nsamples++] = (unsigned long)uc->uc_mcontext.gregs[REG_RIP];
     }
 }
 
+void hostprof_dump(void);
+static void on_term(int sig) { (void)sig; exit(0); }   /* so atexit writes the samples */
+
 void hostprof_start(void) {
     if (!ENV("RT_HOSTPROF")) return;
+    atexit(hostprof_dump);
+    signal(SIGTERM, on_term);
     samples = calloc(MAXS, sizeof *samples);
     callers = calloc(MAXS, sizeof *callers);
     struct sigaction sa = {0};
@@ -55,6 +63,8 @@ extern char __executable_start;
 void hostprof_dump(void) {
     const char *p = ENV("RT_HOSTPROF");
     if (!p || !samples) return;
+    static int done;
+    if (done++) return;
     FILE *f = fopen(p, "w");
     if (!f) return;
     fprintf(f, "base %lx\n", (unsigned long)&__executable_start);

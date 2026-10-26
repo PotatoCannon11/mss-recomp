@@ -147,3 +147,17 @@ Check in over SSH:
   upscale correctly). RT_FRAMES_HIRES=1 dumps frames at internal resolution.
 - Goal from the user: optimized enough for any resolution and upscaling (see memory).
 - Next: fps at 2x/3x/4x, per-frame cost hunting, Challenge crash, baserunning.
+
+## 2026-10-26 night (perf)
+- User report: slow-motion during big effects (star gained/used, big hits, run-scored). Those frames
+  have ~5000 draws (normal play 3500-4000). Heavy-frame profile (RT_HOSTPROF_DRAWS=n samples only such
+  frames): GPU command parsing + vertex decode ~33%, gfx_draw + driver + memcpy ~32%, game code small.
+- Done: uniforms only marked dirty on real changes (games reload identical matrices; each dirty mark
+  broke the batch), incremental conversion of changed XF words, ring-buffer UBO uploads; FIFO stream
+  parsed only once the pending command is complete (was re-decoding big vertex batches every 32
+  bytes); disc reads via kept-open fds + pread loops, NAND IO retries on EINTR; profiler dumps at exit.
+  Match idle share 24% -> 28%; render identical.
+- Note: RT_DETERMINISTIC panics in the intro movie (THP DVDReadPrio beyond file) unless input skips it,
+  and its virtual time shifts scripted menu timing, so it doesn't reach matches; use real-time runs.
+- Next (big one): run GPU emulation on its own thread (FIFO ring between game thread and GPU thread,
+  GL context + SDL on the GPU thread, PE token/finish IRQs raised from it), inline in deterministic mode.

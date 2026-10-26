@@ -19,6 +19,8 @@ GPUState g_gpu;
 
 static u8 stream[1 << 22];
 static u32 stream_len;
+static u32 stream_need;   /* bytes the next (incomplete) command needs before it is worth parsing again */
+static u32 run_need;      /* set by run(): bytes from its start that the command it stopped at needs */
 static u32 last_pi_base;
 
 static void parse_stream(void);
@@ -26,6 +28,7 @@ static void parse_stream(void);
 static int gp_linked(void) { return (mr16(CP_CR) & 0x11) == 0x11; }
 
 static void log_fifo_state(void) {
+    if (!ENV("RT_GFXLOG")) return;
     static u32 last_cr = 0xFFFF, last_base;
     u32 cr = mr16(CP_CR), base = mr32(PI_BASE);
     if ((cr != last_cr || base != last_pi_base) && ENV("RT_GFXLOG")) {
@@ -45,22 +48,22 @@ void gp_write(u32 v, int size) {
     u32 wp = mr32(PI_WP) & 0x3FFFFFFFu;
     if (base != last_pi_base) {
         last_pi_base = base;
-        stream_len = 0;
+        stream_len = stream_need = 0;
     }
+    int linked = gp_linked(), fifo = base && end > base;
     for (int i = size - 1; i >= 0; i--) {
         u8 b = (u8)(v >> (8 * i));
-        if (base && end > base) {
+        if (fifo) {
             MEM[wp & 0x3FFFFFFFu] = b;
-            wp++;
-            if (wp >= end)   /* the write pointer wraps once it reaches the end line */
+            if (++wp >= end)   /* the write pointer wraps once it reaches the end line */
                 wp = base;
         }
-        if (gp_linked() && stream_len < sizeof stream)
+        if (linked && stream_len < sizeof stream)
             stream[stream_len++] = b;
     }
-    if (base && end > base)
+    if (fifo)
         mw32(PI_WP, wp);
-    if (stream_len >= 32)
+    if (stream_len >= 32 && stream_len >= stream_need)
         parse_stream();
 }
 
@@ -197,12 +200,22 @@ static void load_cp(u8 reg, u32 v) {
     g_gpu.cp[reg] = v;
 }
 
+/* only real changes mark uniforms dirty (games reload identical matrices all the time, and every
+ * dirty mark breaks the current draw batch) */
 static void load_xf(u32 addr, u32 n, const u8 *p) {
-    g_gpu.udirty = 1;
     for (u32 i = 0; i < n; i++) {
         u32 a = addr + i, v = (u32)p[4 * i] << 24 | p[4 * i + 1] << 16 | p[4 * i + 2] << 8 | p[4 * i + 3];
-        if (a < 0x1000) g_gpu.xfmem[a] = v;
-        else if (a < 0x1100) g_gpu.xfreg[a - 0x1000] = v;
+        if (a < 0x1000) {
+            if (g_gpu.xfmem[a] == v) continue;
+            g_gpu.xfmem[a] = v;
+            if (a < g_gpu.xf_lo) g_gpu.xf_lo = a;
+            if (a > g_gpu.xf_hi) g_gpu.xf_hi = a;
+            g_gpu.udirty = 1;
+        } else if (a < 0x1100) {
+            if (g_gpu.xfreg[a - 0x1000] == v) continue;
+            g_gpu.xfreg[a - 0x1000] = v;
+            g_gpu.udirty = 1;
+        }
     }
 }
 
@@ -221,8 +234,9 @@ static void load_bp(u32 v) {
         g_gpu.bpmask = v & 0xFFFFFF;
         return;
     }
-    g_gpu.bp[reg] = (g_gpu.bp[reg] & ~mask) | (v & mask & 0xFFFFFF);
-    if (reg >= 0xE0 || reg == 0x43) g_gpu.udirty = 1;   /* TEV colours, fog, alpha refs */
+    u32 old = g_gpu.bp[reg];
+    g_gpu.bp[reg] = (old & ~mask) | (v & mask & 0xFFFFFF);
+    if ((reg >= 0xE0 || reg == 0x43) && g_gpu.bp[reg] != old) g_gpu.udirty = 1;   /* TEV colours, fog, alpha refs */
     switch (reg) {
     case 0x45:   /* PE_DONE: draw done -> finish interrupt */
         if (v & 2) gfx_flush();
@@ -270,46 +284,49 @@ static u32 run(const u8 *p, u32 len, int depth) {
         u8 op = p[i];
         if (op == 0x00 || op == 0x48) { i++; continue; }
         if (op == 0x08) {
-            if (i + 6 > len) break;
+            if (i + 6 > len) { run_need = i + 6; break; }
             load_cp(p[i + 1], (u32)p[i + 2] << 24 | p[i + 3] << 16 | p[i + 4] << 8 | p[i + 5]);
             i += 6; continue;
         }
         if (op == 0x10) {
-            if (i + 5 > len) break;
+            if (i + 5 > len) { run_need = i + 5; break; }
             u32 h = (u32)p[i + 1] << 24 | p[i + 2] << 16 | p[i + 3] << 8 | p[i + 4];
             u32 n = (h >> 16) + 1;
-            if (i + 5 + 4 * n > len) break;
+            if (i + 5 + 4 * n > len) { run_need = i + 5 + 4 * n; break; }
             load_xf(h & 0xFFFF, n, p + i + 5);
             i += 5 + 4 * n; continue;
         }
         if (op == 0x20 || op == 0x28 || op == 0x30 || op == 0x38) {
-            if (i + 5 > len) break;
+            if (i + 5 > len) { run_need = i + 5; break; }
             load_indexed((op - 0x20) >> 3, (u32)p[i + 1] << 24 | p[i + 2] << 16 | p[i + 3] << 8 | p[i + 4]);
             i += 5; continue;
         }
         if (op == 0x40) {
-            if (i + 9 > len) break;
+            if (i + 9 > len) { run_need = i + 9; break; }
             u32 a = ((u32)p[i + 1] << 24 | p[i + 2] << 16 | p[i + 3] << 8 | p[i + 4]) & 0x3FFFFFFFu;
             u32 n = (u32)p[i + 5] << 24 | p[i + 6] << 16 | p[i + 7] << 8 | p[i + 8];
             g_gpu.ndl++;
             if (ENV("RT_DLLOG") && g_gpu.ndl < 40) fprintf(stderr, "gpu: CALL_DL %08X +%X\n", a, n);
-            if (depth < 4 && n < 0x01000000u)
+            if (depth < 4 && n < 0x01000000u) {
+                u32 saved = run_need;   /* a display list's own end doesn't concern the FIFO stream */
                 run(MEM + a, n, depth + 1);
+                run_need = saved;
+            }
             i += 9; continue;
         }
         if (op == 0x61) {
-            if (i + 5 > len) break;
+            if (i + 5 > len) { run_need = i + 5; break; }
             load_bp((u32)p[i + 1] << 24 | p[i + 2] << 16 | p[i + 3] << 8 | p[i + 4]);
             i += 5; continue;
         }
         if (op >= 0x80 && op < 0xC0) {
-            if (i + 3 > len) break;
+            if (i + 3 > len) { run_need = i + 3; break; }
             int vat = op & 7, prim = (op >> 3) & 7;
             u32 n = (u32)p[i + 1] << 8 | p[i + 2];
             VtxFmt f;
             vtx_fmt(vat, &f);
             g_gpu.cur_vat = vat;
-            if (i + 3 + n * f.size > len) break;
+            if (i + 3 + n * f.size > len) { run_need = i + 3 + n * f.size; break; }
             static GXVertex verts[65536];
             const u8 *q = p + i + 3;
             for (u32 k = 0; k < n; k++, q += f.size)
@@ -322,13 +339,16 @@ static u32 run(const u8 *p, u32 len, int depth) {
             fprintf(stderr, "gpu: unknown opcode %02X\n", op);
         i++;
     }
+    if (i >= len) run_need = 0;
     return i;
 }
 
 static void parse_stream(void) {
+    run_need = 0;
     u32 used = run(stream, stream_len, 0);
     memmove(stream, stream + used, stream_len - used);
     stream_len -= used;
+    stream_need = run_need > used ? run_need - used : 0;
 }
 
 /* GX entry points that need the stream drained first */
@@ -337,4 +357,5 @@ void gpu_sync(void) { parse_stream(); }
 void gpu_init(void) {
     g_gpu.bpmask = 0xFFFFFF;
     g_gpu.udirty = 1;
+    g_gpu.xf_lo = 0; g_gpu.xf_hi = 0xFFF;   /* first fill converts everything */
 }

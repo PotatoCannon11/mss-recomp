@@ -575,25 +575,27 @@ typedef struct {
 static float xf_f(u32 a) { return u2f(g_gpu.xfmem[a]); }
 static void rgba(u32 v, float o[4]) { o[0] = (v >> 24) / 255.f; o[1] = ((v >> 16) & 255) / 255.f; o[2] = ((v >> 8) & 255) / 255.f; o[3] = (v & 255) / 255.f; }
 
+/* convert one changed xfmem word into its place in the uniform block */
+static void xf_word(Uniforms *u, u32 a) {
+    if (a < 0x100) u->pmtx[a >> 2][a & 3] = xf_f(a);
+    else if (a >= 0x400 && a < 0x460) u->nmtx[(a - 0x400) / 3][(a - 0x400) % 3] = xf_f(a);
+    else if (a >= 0x500 && a < 0x600) u->ptmtx[(a - 0x500) >> 2][a & 3] = xf_f(a);
+    else if (a >= 0x600 && a < 0x680) {
+        int l = (a - 0x600) >> 4, o = (a - 0x600) & 15;
+        if (o == 3) rgba(g_gpu.xfmem[a], u->lcol[l]);
+        else if (o >= 4 && o < 7) u->lcos[l][o - 4] = xf_f(a);
+        else if (o >= 7 && o < 10) u->ldist[l][o - 7] = xf_f(a);
+        else if (o >= 10 && o < 13) u->lpos[l][o - 10] = xf_f(a);
+        else if (o >= 13) u->ldir[l][o - 13] = xf_f(a);
+    }
+}
+
+/* bring the uniform block up to date: only the xfmem words written since the last fill (tracked by
+ * load_xf), plus the small register-derived part */
 static void fill_uniforms(Uniforms *u) {
-    for (int i = 0; i < 64; i++)
-        for (int k = 0; k < 4; k++) u->pmtx[i][k] = xf_f(i * 4 + k);
-    for (int i = 0; i < 32; i++) {
-        for (int k = 0; k < 3; k++) u->nmtx[i][k] = xf_f(0x400 + i * 3 + k);
-        u->nmtx[i][3] = 0;
-    }
-    for (int i = 0; i < 64; i++)
-        for (int k = 0; k < 4; k++) u->ptmtx[i][k] = xf_f(0x500 + i * 4 + k);
-    for (int l = 0; l < 8; l++) {
-        u32 b = 0x600 + 0x10 * l;
-        rgba(g_gpu.xfmem[b + 3], u->lcol[l]);
-        for (int k = 0; k < 3; k++) {
-            u->lcos[l][k] = xf_f(b + 4 + k);
-            u->ldist[l][k] = xf_f(b + 7 + k);
-            u->lpos[l][k] = xf_f(b + 10 + k);
-            u->ldir[l][k] = xf_f(b + 13 + k);
-        }
-    }
+    for (u32 w = g_gpu.xf_lo; w <= g_gpu.xf_hi && w < 0x1000; w++) xf_word(u, w);
+    g_gpu.xf_lo = 0xFFFFFFFFu;
+    g_gpu.xf_hi = 0;
     rgba(g_gpu.xfreg[0x0A], u->ambc[0]);
     rgba(g_gpu.xfreg[0x0B], u->ambc[1]);
     rgba(g_gpu.xfreg[0x0C], u->matc[0]);
@@ -684,6 +686,28 @@ typedef struct { GLuint prog; u32 tex[8][4]; u32 st[5]; } BatchSig;
 static BatchSig cur_sig;
 static int have_sig;
 
+/* uniforms go into a ring buffer: each change is written to fresh space without waiting for the GPU
+ * (the whole ring is orphaned when it wraps) and bound by offset */
+#define UBO_RING (32u << 20)
+static void upload_uniforms(const Uniforms *u) {
+    static GLint align;
+    static u32 off = UBO_RING;
+    if (!align) { glGetIntegerv(GL_UNIFORM_BUFFER_OFFSET_ALIGNMENT, &align); if (align < 16) align = 16; }
+    u32 size = (sizeof *u + align - 1) / align * align;
+    glBindBuffer(GL_UNIFORM_BUFFER, ubo);
+    if (off + size > UBO_RING) {
+        glBufferData(GL_UNIFORM_BUFFER, UBO_RING, NULL, GL_STREAM_DRAW);
+        off = 0;
+    }
+    void *dst = glMapBufferRange(GL_UNIFORM_BUFFER, off, sizeof *u, GL_MAP_WRITE_BIT | GL_MAP_UNSYNCHRONIZED_BIT | GL_MAP_INVALIDATE_RANGE_BIT);
+    if (dst) {
+        memcpy(dst, u, sizeof *u);
+        glUnmapBuffer(GL_UNIFORM_BUFFER);
+    }
+    glBindBufferRange(GL_UNIFORM_BUFFER, 0, ubo, off, sizeof *u);
+    off += size;
+}
+
 static void batch_flush(void) {
     if (!nbi) { nbv = 0; return; }
     glUseProgram(batch_prog);
@@ -744,15 +768,9 @@ void gfx_draw(int prim, const GXVertex *v, u32 n) {
             if ((tref >> 6) & 1) bind_texture(tref & 7);
         }
         static Uniforms u;
-        if (g_gpu.udirty) fill_uniforms(&u);
-        static Uniforms last_u;
-        static int have_u;
-        if (!have_u || memcmp(&u, &last_u, sizeof u)) {
-            glBindBuffer(GL_UNIFORM_BUFFER, ubo);
-            glBufferData(GL_UNIFORM_BUFFER, sizeof u, &u, GL_STREAM_DRAW);
-            glBindBufferBase(GL_UNIFORM_BUFFER, 0, ubo);
-            last_u = u;
-            have_u = 1;
+        if (g_gpu.udirty) {
+            fill_uniforms(&u);
+            upload_uniforms(&u);
         }
         g_gpu.udirty = 0;
         glBindFramebuffer(GL_FRAMEBUFFER, efb_fbo);

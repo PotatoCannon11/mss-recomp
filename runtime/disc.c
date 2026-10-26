@@ -1,11 +1,14 @@
 /* The game disc, served from an extracted filesystem (dtk disc extract): disc offsets are mapped
  * to files through the partition's FST, exactly as the drive would see them. */
+#include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 #include "runtime.h"
 
-typedef struct { u64 off, size; char *path; } Region;
+typedef struct { u64 off, size; char *path; int fd; } Region;   /* fd: opened on first read, kept */
 static Region *regions;
 static int nregions, cap;
 static u8 *fst;
@@ -16,7 +19,7 @@ static void add(u64 off, u64 size, const char *path) {
         cap = cap ? cap * 2 : 1024;
         regions = realloc(regions, cap * sizeof *regions);
     }
-    regions[nregions++] = (Region){off, size, strdup(path)};
+    regions[nregions++] = (Region){off, size, strdup(path), -1};
 }
 
 static u8 *slurp(const char *path, u32 *size) {
@@ -99,11 +102,18 @@ u32 disc_read(u64 off, u32 dst, u32 len) {
             return done;
         }
         u32 n = (u32)((r->off + r->size - o) < (len - done) ? (r->off + r->size - o) : (len - done));
-        FILE *f = fopen(r->path, "rb");
-        if (!f) { fprintf(stderr, "disc: cannot open %s\n", r->path); return done; }
-        fseek(f, (long)(o - r->off), SEEK_SET);
-        size_t got = fread(MEM + dst + done, 1, n, f);
-        fclose(f);
+        if (r->fd < 0 && (r->fd = open(r->path, O_RDONLY | O_CLOEXEC)) < 0) {
+            fprintf(stderr, "disc: cannot open %s\n", r->path);
+            return done;
+        }
+        /* pread until complete: signals (profiler, timers) can cut a read short */
+        u32 got = 0;
+        while (got < n) {
+            ssize_t k = pread(r->fd, MEM + dst + done + got, n - got, (off_t)(o - r->off + got));
+            if (k > 0) got += (u32)k;
+            else if (k < 0 && errno == EINTR) continue;
+            else break;
+        }
         if (got < n) memset(MEM + dst + done + got, 0, n - got);
         done += n;
     }
