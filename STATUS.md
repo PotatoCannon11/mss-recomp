@@ -24,3 +24,10 @@ Check in over SSH:
 - Desktop "crash": likely the window stopped responding while no frames were presented; window
   events are now pumped every retrace. Still unconfirmed — retry on the desktop.
 - Next: navigate title -> menus -> exhibition match with scripted input; then controls/swing mapping.
+
+## 2026-10-26 evening
+- MILESTONE: full menu flow into a match works (headless, scripted input): title -> file select ->
+  menu -> stage select -> captain/roster -> batting order -> rules -> "Mario Fireballs vs Luigi
+  Knights" loading -> in-stadium cutscene -> pitching tutorial. Contact sheet: build/match_reached.png
+- Clock now counts from 2000-01-01 like the Wii (real dates in saves).
+- Next: get through the tutorial into live pitching/batting; tune motion (swing/pitch) input.
