@@ -1,0 +1,4 @@
+# generated from the game's main.dol and build outputs: never commit
+build/
+*.dol
+*.o
