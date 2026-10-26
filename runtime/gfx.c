@@ -894,6 +894,42 @@ static void write_ppm(const char *dir, u64 frame, int sx, int sy, int w, int h) 
 
 #include <time.h>
 static struct timespec g_start;
+
+/* RT_VIDEO=file: stream presented frames to ffmpeg as constant 60 fps video in wall-clock time
+ * (frames repeat while the game holds one), so playback speed is what a player would see */
+#define VID_W 640
+#define VID_H 480
+static void record_video(int sx, int sy, int sw, int sh) {
+    static FILE *pipe_;
+    static int failed;
+    static double next_t;
+    static u8 canvas[VID_W * VID_H * 4];
+    const char *out = ENV("RT_VIDEO");
+    if (!out || failed) return;
+    if (!pipe_) {
+        char cmd[1024];
+        snprintf(cmd, sizeof cmd, "ffmpeg -loglevel error -y -f rawvideo -pix_fmt rgba -s %dx%d -r 60 -i - "
+                 "-vf vflip -c:v libx264 -preset veryfast -crf 20 -pix_fmt yuv420p '%s'", VID_W, VID_H, out);
+        if (!(pipe_ = popen(cmd, "w"))) { failed = 1; return; }
+    }
+    struct timespec t;
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    double now = (t.tv_sec - g_start.tv_sec) + (t.tv_nsec - g_start.tv_nsec) / 1e9;
+    if (now < next_t) return;   /* faster than 60 Hz: drop */
+    if (sw > VID_W) sw = VID_W;
+    if (sh > VID_H) sh = VID_H;
+    memset(canvas, 0, sizeof canvas);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, efb_fbo);
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glPixelStorei(GL_PACK_ROW_LENGTH, VID_W);
+    /* bottom-aligned in GL's flipped space so the image sits at the top after vflip */
+    glReadPixels(sx, EFB_H - sy - sh, sw, sh, GL_RGBA, GL_UNSIGNED_BYTE, canvas + 4 * (VID_W * (VID_H - sh)));
+    glPixelStorei(GL_PACK_ROW_LENGTH, 0);
+    if (next_t == 0) { next_t = now; fprintf(stderr, "video: starts %.3f s after launch (offset for RT_WAV)\n", now); }
+    int reps = 0;
+    while (next_t <= now + 1e-6) { reps++; next_t += 1.0 / 60; }   /* fill the time this frame was shown */
+    while (reps--) fwrite(canvas, 1, sizeof canvas, pipe_);
+}
 __attribute__((constructor)) static void note_start(void) { clock_gettime(CLOCK_MONOTONIC, &g_start); }
 void gfx_present(int sx, int sy, int sw, int sh) {
     gfx_batch_flush();
@@ -929,6 +965,7 @@ void gfx_present(int sx, int sy, int sw, int sh) {
             fflush(times);
         }
     }
+    record_video(sx, sy, sw, sh);
     window_present(efb_color, sx, sy, sw, sh, EFB_W, EFB_H);
     glBindFramebuffer(GL_FRAMEBUFFER, efb_fbo);
 }

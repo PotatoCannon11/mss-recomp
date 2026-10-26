@@ -60,3 +60,19 @@ Check in over SSH:
 - Pitching: holding the remote pointing up (`P`) satisfies the "Pull up" prompt (Mario winds up,
   prompt becomes "Throw"). A sideways swing does not count as a throw; testing an overhand throw
   profile (`T` / `Y`, either sign of the forward axis).
+
+## 2026-10-26 afternoon
+- FIX (speed): the match was pinned at exactly 30 fps. The main loop waits one retrace per frame and
+  frame work ran just over 16.7 ms, so every frame slipped to two retraces. getenv on hot paths,
+  libm ldexp/nearbyint and fat GL vertices (156 -> 108 bytes) fixed it: matches hold ~60 fps.
+- FIX (render): scrambled/grey character icons (batting order, roster). The per-frame texture
+  fast path ignored palette (TLUT) reloads into the same TMEM slot.
+- RT_VIDEO=file.mp4 streams frames to ffmpeg in wall-clock time (true playback speed); mux RT_WAV
+  with the printed offset. Demo: build/mss_linux_demo2.mp4
+- Tools: per-thread host profiler with library/caller attribution; RT_WATCH=addr:len:tick data
+  watchpoint (tools/watch.py) - the game reads motion via fn_8050C034 / fn_8050C0B8.
+- Pitching: "Pull up" = a quick upward jerk (S does it). "Throw: swing down" still not reliably
+  detected (one pitch registered by chance); T is now a swing-down profile, untested in pitching.
+  Practice can be skipped with + (pause in a match; A resumes).
+- Next: pin down the throw detector (callers of fn_8050C034: fn_801CB44C, fn_8024A69C,
+  fn_805163F8), then a desktop play test.
