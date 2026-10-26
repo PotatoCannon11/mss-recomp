@@ -337,6 +337,19 @@ void trace_enter(u32 addr, u32 lr) {
             fprintf(stderr, "\n");
         }
     if (callers_of == 1) callers_of = getenv("RT_CALLERS") ? (u32)strtoul(getenv("RT_CALLERS"), NULL, 16) : 0;
+    static u32 cal_lo = 1, cal_hi;
+    if (cal_lo == 1) {
+        const char *e = getenv("RT_CALLEES_OF");   /* lo-hi: count functions called from code in this range */
+        cal_lo = 0;
+        if (e) { cal_lo = (u32)strtoul(e, (char **)&e, 16); cal_hi = *e == '-' ? (u32)strtoul(e + 1, NULL, 16) : cal_lo + 4; }
+    }
+    if (cal_lo) {
+        if (g_prof_on && lr - 4 >= cal_lo && lr - 4 < cal_hi) {
+            if (!prof_cnt) prof_cnt = calloc(1 << 22, 4);
+            prof_cnt[prof_slot(addr)]++;
+        }
+        return;
+    }
     if (callers_of && addr == callers_of && g_prof_on) {
         if (!prof_cnt) prof_cnt = calloc(1 << 22, 4);
         prof_cnt[prof_slot(lr - 4)]++;   /* count call sites instead of callees */

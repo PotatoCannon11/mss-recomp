@@ -86,7 +86,14 @@ static void mix_one(u32 m, u32 ctrl, int bit_on, int bit_delta, u32 voff, u32 do
     if (d) w16(m + voff, (u16)v);
 }
 
+static int axlog = -1, axlog_frame;
 static void process_voice(u32 pb) {
+    if (axlog < 0) axlog = getenv("RT_AXLOG") != NULL;
+    if (axlog && axlog_frame % 333 == 0)
+        fprintf(stderr, "ax: pb %08X state %u type %u fmt %u cur %08X end %08X loop %08X/%u ratio %08X vol %04X mix %08X L %04X R %04X\n", pb,
+                r16(pb + 0x10), r16(pb + 0x12), r16(pb + 0x70), (u32)r16(pb + 0x7A) << 16 | r16(pb + 0x7C),
+                (u32)r16(pb + 0x76) << 16 | r16(pb + 0x78), (u32)r16(pb + 0x72) << 16 | r16(pb + 0x74), r16(pb + 0x6E),
+                (u32)r16(pb + 0xA6) << 16 | r16(pb + 0xA8), r16(pb + 0x6A), (u32)r16(pb + 0x0C) << 16 | r16(pb + 0x0E), r16(pb + 0x14), r16(pb + 0x18));
     if (r16(pb + 0x10) != 1) return;   /* state: running */
     Src s = {0};
     s.loopflag = r16(pb + 0x6E);
@@ -264,6 +271,7 @@ static void run_list(u32 list) {
         case 0: A32(); memset(bus, 0, sizeof bus); break;   /* SETUP */
         case 1: case 2: case 3: A32(); break;                 /* surround into LR (stereo: nothing) */
         case 4: {   /* PROCESS: walk the voice list */
+            axlog_frame++;
             u32 pb = A32();
             for (int n = 0; pb && n < 256; n++) {
                 process_voice(pb);
@@ -294,3 +302,15 @@ HLE(DSPSendMailToDSP) {
 }
 
 void audio_frame_done(void) {}
+
+/* debug (thread dump): AX voices on the priority stacks, CPU-side and DSP-side state */
+void ax_dump(void) {
+    fprintf(stderr, "---- AX: %u voices serviced last frame, PB array %08X\n", mr32(DATA___AXNumVoices), mr32(DATA___AXPB));
+    for (int prio = 31; prio >= 0; prio--)
+        for (u32 v = mr32(DATA___AXStackHead + 4 * prio), n = 0; v && n < 96; v = mr32(v), n++) {
+            u32 idx = mr32(v + 0x18), pb = mr32(DATA___AXPB) + idx * 0x140;
+            fprintf(stderr, "  prio %2d vpb %08X idx %2u sync %08X | cpu state %u fmt %u cur %08X | dsp state %u\n", prio, v, idx,
+                    mr32(v + 0x1C), mr16(v + 0x28 + 0x10), mr16(v + 0x28 + 0x70),
+                    (u32)mr16(v + 0x28 + 0x7A) << 16 | mr16(v + 0x28 + 0x7C), r16(pb + 0x10));
+        }
+}

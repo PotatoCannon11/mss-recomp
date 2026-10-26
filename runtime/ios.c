@@ -82,6 +82,20 @@ static void write_default_sysconf(const char *path) {
     if (f) { fwrite(buf, 1, sizeof buf, f); fclose(f); }
 }
 
+/* /title/00000001/00000002/data/setting.txt: console region/product info, XOR-obfuscated */
+static void write_default_setting(const char *path) {
+    const char *txt = "AREA=USA\r\nMODEL=RVL-001(USA)\r\nDVD=0\r\nMPCH=0x7FFE\r\nCODE=LU\r\nSERNO=000000000\r\nVIDEO=NTSC\r\nGAME=US\r\n";
+    u8 buf[0x100] = {0};
+    memcpy(buf, txt, strlen(txt));
+    u32 key = 0x73B5DBFA;
+    for (int i = 0; i < 0x100; i++) {
+        buf[i] ^= (u8)key;
+        key = (key << 1) | (key >> 31);
+    }
+    FILE *f = fopen(path, "wb");
+    if (f) { fwrite(buf, 1, sizeof buf, f); fclose(f); }
+}
+
 void ios_init(void) {
     const char *r = getenv("RT_NAND");
     if (r) snprintf(nand_root, sizeof nand_root, "%s", r);
@@ -95,6 +109,10 @@ void ios_init(void) {
     mkdirs(p);
     host_path("/shared2/sys/SYSCONF", p, sizeof p);
     if (access(p, F_OK)) write_default_sysconf(p);
+    host_path("/title/00000001/00000002/data", p, sizeof p);
+    mkdirs(p);
+    host_path("/title/00000001/00000002/data/setting.txt", p, sizeof p);
+    if (access(p, F_OK)) write_default_setting(p);
     fprintf(stderr, "nand: %s\n", nand_root);
 }
 

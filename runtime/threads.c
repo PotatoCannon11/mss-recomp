@@ -117,6 +117,8 @@ HLE(OSSaveContext) {
 
 HLE(OSLoadContext) {
     u32 ctx = c->r[3];
+    /* loading a context leaves it "not saved by an exception" (OS_CONTEXT_STATE_EXC cleared) */
+    mw16(ctx + 0x1A2, mr16(ctx + 0x1A2) & ~2u);
     if (in_irq && ctx == irq_ctx)
         return;   /* return from an interrupt handler to the interrupted thread */
     if (ctx == cur->ctx)
@@ -227,6 +229,7 @@ static int poll_irqs(CPU *c) {
         any = 1;
     }
     mw32(0x800000D4u, irq_ctx);
+    if (irq_ctx) mw16(irq_ctx + 0x1A2, mr16(irq_ctx + 0x1A2) & ~2u);   /* as the exception return would */
     in_irq = 0;
     *c = save;
     return any;
@@ -293,7 +296,24 @@ HLE(OSRestoreInterrupts) {
 volatile int g_irq_pending;
 
 /* debug: every guest thread with its state and guest call stack (RT_DUMP_AFTER=<seconds>) */
+static void peek(void) {
+    const char *e = getenv("RT_PEEK");   /* addr:len[,addr:len...] */
+    while (e && *e) {
+        u32 a = (u32)strtoul(e, (char **)&e, 16), n = 64;
+        if (*e == ':') n = (u32)strtoul(e + 1, (char **)&e, 16);
+        if (*e == ',') e++;
+        for (u32 i = 0; i < n; i += 16) {
+            fprintf(stderr, "%08X:", a + i);
+            for (u32 k = 0; k < 16 && i + k < n; k += 4) fprintf(stderr, " %08X", mr32(a + i + k));
+            fprintf(stderr, "\n");
+        }
+    }
+}
+
+void ax_dump(void);
 static void dump_threads(void) {
+    peek();
+    ax_dump();
     static const char *st[] = {"?", "READY", "RUNNING", "?", "WAITING", "?", "?", "?", "MORIBUND"};
     fprintf(stderr, "---- guest threads (current %08X)\n", mr32(0x800000E4u));
     for (u32 t = mr32(0x800000DCu), n = 0; t && n < 64; t = mr32(t + 0x2FC), n++) {
