@@ -161,3 +161,10 @@ Check in over SSH:
   and its virtual time shifts scripted menu timing, so it doesn't reach matches; use real-time runs.
 - Next (big one): run GPU emulation on its own thread (FIFO ring between game thread and GPU thread,
   GL context + SDL on the GPU thread, PE token/finish IRQs raised from it), inline in deterministic mode.
+- BIG: GPU emulation runs on its own thread. The game thread stages write-gather bytes into an SPSC
+  ring (chunks with a FIFO-reset flag; published when full and at every interrupt poll); the GPU
+  thread owns GL + the SDL window, parses/draws, raises token/finish IRQs, polls window input.
+  RT_DETERMINISTIC / RT_GPU_INLINE keep it inline. Game-thread idle in a match: ~25% -> 70-80%.
+  Windowed 3x (1920x1584) and 4x (2560x2112): 59.7-59.8 fps avg, min 58, game thread ~73% idle.
+- Next: user retest of big star/hit effects; frame pacing check; then the remaining GPU-thread costs
+  (vertex decode) for 8x / multi-monitor headroom.

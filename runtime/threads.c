@@ -180,6 +180,7 @@ void ai_block_done(void);
 void FN_GXTokenInterruptHandler(CPU *c);
 
 static int poll_irqs(CPU *c) {
+    gpu_publish();   /* staged GPU commands go out at least this often (the game may be waiting on them) */
     if (in_irq)
         return 0;
     u64 now = now_tb();
@@ -247,7 +248,7 @@ static int poll_irqs(CPU *c) {
         mw32(0x800000D4u, IRQ_CONTEXT);
         FN___VIRetraceHandler(c);
         mw32(0x800000D4u, IRQ_CONTEXT);
-        window_poll();   /* keep the window responsive even while the game presents no frames */
+        if (!gpu_threaded) window_poll();   /* keep the window responsive even while the game presents no frames */
         wpad_tick(c);
         any = 1;
     }

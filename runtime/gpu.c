@@ -3,8 +3,12 @@
  * with GXBeginDisplayList land where GX expects them) and, while the GP is linked to the CPU FIFO,
  * decoded here: CP/XF/BP register loads, display-list calls and primitives. Primitives are decoded
  * into host vertices and handed to the renderer (gfx.c). */
+#include <pthread.h>
+#include <sched.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <time.h>
 #include "runtime.h"
 #include "gpu.h"
 
@@ -24,6 +28,101 @@ static u32 run_need;      /* set by run(): bytes from its start that the command
 static u32 last_pi_base;
 
 static void parse_stream(void);
+
+/* ---------------------------------------------------------------- GPU thread
+ * The game thread stages write-gather bytes and publishes them in chunks ([u32 len | reset << 31]
+ * then the bytes) through a single-producer/single-consumer ring; the GPU thread owns the GL context
+ * and the window, parses and draws, and raises the token/finish interrupt flags. RT_DETERMINISTIC
+ * (or RT_GPU_INLINE) keeps everything on the game thread. */
+int gpu_threaded;
+#define RING (32u << 20)
+static u8 ring[RING];
+static _Atomic u32 ring_w, ring_r;   /* monotonic byte counters */
+static _Atomic int gpu_sleeping;
+static pthread_mutex_t gpu_mu = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t gpu_cv = PTHREAD_COND_INITIALIZER;
+static u8 stage[8192];
+static u32 stage_len;
+static int stage_reset;
+
+static void ring_put(u32 w, const void *p, u32 n) {
+    u32 o = w % RING, k = n < RING - o ? n : RING - o;
+    memcpy(ring + o, p, k);
+    memcpy(ring, (const u8 *)p + k, n - k);
+}
+static void ring_get(u32 r, void *p, u32 n) {
+    u32 o = r % RING, k = n < RING - o ? n : RING - o;
+    memcpy(p, ring + o, k);
+    memcpy((u8 *)p + k, ring, n - k);
+}
+
+/* hand the staged bytes to the GPU thread (game thread) */
+void gpu_publish(void) {
+    if (!gpu_threaded || (!stage_len && !stage_reset)) return;
+    u32 w = atomic_load_explicit(&ring_w, memory_order_relaxed), need = stage_len + 4;
+    while (RING - (w - atomic_load_explicit(&ring_r, memory_order_acquire)) < need) sched_yield();   /* GPU behind: wait */
+    u32 hdr = stage_len | (u32)stage_reset << 31;
+    ring_put(w, &hdr, 4);
+    ring_put(w + 4, stage, stage_len);
+    atomic_store_explicit(&ring_w, w + need, memory_order_release);
+    stage_len = 0;
+    stage_reset = 0;
+    if (atomic_load_explicit(&gpu_sleeping, memory_order_acquire)) {
+        pthread_mutex_lock(&gpu_mu);
+        pthread_cond_signal(&gpu_cv);
+        pthread_mutex_unlock(&gpu_mu);
+    }
+}
+
+static void *gpu_main(void *arg) {
+    (void)arg;
+    gfx_init();
+    struct timespec last_poll = {0};
+    for (;;) {
+        u32 r = atomic_load_explicit(&ring_r, memory_order_relaxed);
+        u32 w = atomic_load_explicit(&ring_w, memory_order_acquire);
+        struct timespec now;
+        clock_gettime(CLOCK_MONOTONIC, &now);
+        if ((now.tv_sec - last_poll.tv_sec) * 1000000000L + (now.tv_nsec - last_poll.tv_nsec) > 8000000L) {
+            window_poll();   /* input and window events live on this thread with the window */
+            last_poll = now;
+        }
+        if (r == w) {
+            atomic_store_explicit(&gpu_sleeping, 1, memory_order_release);
+            pthread_mutex_lock(&gpu_mu);
+            if (atomic_load_explicit(&ring_w, memory_order_acquire) == r) {
+                struct timespec until = now;
+                until.tv_nsec += 4000000;
+                if (until.tv_nsec >= 1000000000L) { until.tv_sec++; until.tv_nsec -= 1000000000L; }
+                pthread_cond_timedwait(&gpu_cv, &gpu_mu, &until);   /* also wakes for window polling */
+            }
+            pthread_mutex_unlock(&gpu_mu);
+            atomic_store_explicit(&gpu_sleeping, 0, memory_order_release);
+            continue;
+        }
+        while (r != w) {
+            u32 hdr, n;
+            ring_get(r, &hdr, 4);
+            n = hdr & 0x7FFFFFFF;
+            if (hdr >> 31) stream_len = stream_need = 0;
+            if (stream_len + n > sizeof stream) stream_len = stream_need = 0;   /* runaway: drop */
+            ring_get(r + 4, stream + stream_len, n);
+            stream_len += n;
+            r += 4 + n;
+            if (stream_len >= stream_need) parse_stream();
+        }
+        atomic_store_explicit(&ring_r, r, memory_order_release);
+    }
+    return NULL;
+}
+
+/* start rendering: on its own thread, or inline for deterministic runs */
+void gpu_start(void) {
+    gpu_threaded = !g_deterministic && !ENV("RT_GPU_INLINE");
+    if (!gpu_threaded) { gfx_init(); return; }
+    pthread_t t;
+    pthread_create(&t, NULL, gpu_main, NULL);
+}
 
 static int gp_linked(void) { return (mr16(CP_CR) & 0x11) == 0x11; }
 
@@ -48,9 +147,23 @@ void gp_write(u32 v, int size) {
     u32 wp = mr32(PI_WP) & 0x3FFFFFFFu;
     if (base != last_pi_base) {
         last_pi_base = base;
-        stream_len = stream_need = 0;
+        if (gpu_threaded) { gpu_publish(); stage_reset = 1; }
+        else stream_len = stream_need = 0;
     }
     int linked = gp_linked(), fifo = base && end > base;
+    if (gpu_threaded) {   /* the GPU thread does the parsing: just stage the bytes */
+        for (int i = size - 1; i >= 0; i--) {
+            u8 b = (u8)(v >> (8 * i));
+            if (fifo) {
+                MEM[wp & 0x3FFFFFFFu] = b;
+                if (++wp >= end) wp = base;
+            }
+            if (linked) stage[stage_len++] = b;
+        }
+        if (fifo) mw32(PI_WP, wp);
+        if (stage_len >= sizeof stage - 8) gpu_publish();
+        return;
+    }
     for (int i = size - 1; i >= 0; i--) {
         u8 b = (u8)(v >> (8 * i));
         if (fifo) {

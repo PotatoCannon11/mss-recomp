@@ -480,12 +480,12 @@ int main(int argc, char **argv) {
     load_dol(argv[1]);
     lowmem_init("RMBE01");
     hle_init(argc > 2 ? argv[2] : NULL);
+    g_deterministic = ENV("RT_DETERMINISTIC") != NULL;
     gpu_init();
-    gfx_init();
+    gpu_start();
     CPU *c = &g_cpu;
     c->msr = 0x00002032;   /* FP, IR/DR on, interrupts off as after the apploader */
     c->lr = 0;
-    g_deterministic = ENV("RT_DETERMINISTIC") != NULL;
     rt_timer_start();
     void hostprof_start(void);
     hostprof_start();

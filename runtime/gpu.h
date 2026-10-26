@@ -25,6 +25,10 @@ typedef struct {
 } GXVertex;
 
 void gpu_init(void);
+void gpu_start(void);     /* renderer on its own thread (or inline when deterministic) */
+void gpu_publish(void);   /* game thread: hand staged FIFO bytes to the GPU thread */
+extern int gpu_threaded;
+extern int g_deterministic;
 void gpu_sync(void);
 void gp_write(u32 v, int size);
 
