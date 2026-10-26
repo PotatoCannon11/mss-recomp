@@ -32,7 +32,7 @@ static const char *(*SDL_GetError_)(void);
 #define SYM(n) (*(void **)&n##_ = dlsym(sdl, #n))
 
 int gfx_window_init(int w, int h) {
-    if (getenv("RT_HEADLESS") || (!getenv("DISPLAY") && !getenv("WAYLAND_DISPLAY")))
+    if (ENV("RT_HEADLESS") || (!ENV("DISPLAY") && !ENV("WAYLAND_DISPLAY")))
         return 0;
     sdl = dlopen("libSDL2-2.0.so.0", RTLD_NOW);
     if (!sdl) { fprintf(stderr, "window: libSDL2 not found, running headless\n"); return 0; }

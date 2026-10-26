@@ -28,7 +28,7 @@ static int gp_linked(void) { return (mr16(CP_CR) & 0x11) == 0x11; }
 static void log_fifo_state(void) {
     static u32 last_cr = 0xFFFF, last_base;
     u32 cr = mr16(CP_CR), base = mr32(PI_BASE);
-    if ((cr != last_cr || base != last_pi_base) && getenv("RT_GFXLOG")) {
+    if ((cr != last_cr || base != last_pi_base) && ENV("RT_GFXLOG")) {
         fprintf(stderr, "gpu: CP_CR %04X PI fifo %08X-%08X wp %08X | CP fifo base %04X%04X rp %04X%04X wp %04X%04X\n", cr, base,
                 mr32(PI_END), mr32(PI_WP), mr16(0xCC000022u), mr16(0xCC000020u), mr16(0xCC00003Au), mr16(0xCC000038u),
                 mr16(0xCC000036u), mr16(0xCC000034u));
@@ -292,7 +292,7 @@ static u32 run(const u8 *p, u32 len, int depth) {
             u32 a = ((u32)p[i + 1] << 24 | p[i + 2] << 16 | p[i + 3] << 8 | p[i + 4]) & 0x3FFFFFFFu;
             u32 n = (u32)p[i + 5] << 24 | p[i + 6] << 16 | p[i + 7] << 8 | p[i + 8];
             g_gpu.ndl++;
-            if (getenv("RT_DLLOG") && g_gpu.ndl < 40) fprintf(stderr, "gpu: CALL_DL %08X +%X\n", a, n);
+            if (ENV("RT_DLLOG") && g_gpu.ndl < 40) fprintf(stderr, "gpu: CALL_DL %08X +%X\n", a, n);
             if (depth < 4 && n < 0x01000000u)
                 run(MEM + a, n, depth + 1);
             i += 9; continue;

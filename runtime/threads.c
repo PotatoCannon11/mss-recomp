@@ -64,7 +64,7 @@ static void co_entry(void) {
         c->gqr[i] = mr32(x + 0x1A4 + 4 * i);
     c->msr = 0x0000B032;   /* EE on, as after rfi into a new thread */
     u32 entry = mr32(x + 0x198), ret = c->lr;
-    if (getenv("RT_THREADLOG"))
+    if (ENV("RT_THREADLOG"))
         fprintf(stderr, "thread %08X starts at %08X (%s) r3=%08X\n", x, entry, fn_name(entry), c->r[3]);
     call_indirect(c, entry);
     call_indirect(c, ret);   /* returning from the thread function enters OSExitThread */
@@ -323,7 +323,7 @@ volatile int g_irq_pending;
 
 /* debug: every guest thread with its state and guest call stack (RT_DUMP_AFTER=<seconds>) */
 static void peek(void) {
-    const char *e = getenv("RT_PEEK");   /* addr:len[,addr:len...] */
+    const char *e = ENV("RT_PEEK");   /* addr:len[,addr:len...] */
     while (e && *e) {
         u32 a = (u32)strtoul(e, (char **)&e, 16), n = 64;
         if (*e == ':') n = (u32)strtoul(e + 1, (char **)&e, 16);
@@ -370,7 +370,7 @@ static void on_usr1(int sig) { (void)sig; dump_requested = 1; }
 
 static void *timer_thread(void *arg) {
     (void)arg;
-    const char *d = getenv("RT_DUMP_AFTER"), *pr = getenv("RT_PROFILE");
+    const char *d = ENV("RT_DUMP_AFTER"), *pr = ENV("RT_PROFILE");
     long dump_ms = d ? atol(d) * 1000 : -1, ms = 0, p0 = -1, p1 = -1;
     if (pr) { p0 = atol(pr) * 1000; const char *dash = strchr(pr, '-'); p1 = dash ? atol(dash + 1) * 1000 : p0 + 1000; }
     struct timespec t0;
@@ -385,7 +385,7 @@ static void *timer_thread(void *arg) {
         ms = (t.tv_sec - t0.tv_sec) * 1000 + (t.tv_nsec - t0.tv_nsec) / 1000000;
         if (dump_ms >= 0 && ms >= dump_ms && !dumped) { dumped = 1; dump_threads(); }
         if (dump_requested) { dump_requested = 0; dump_threads(); rt_backtrace(); }
-        if (getenv("RT_THREADPROF")) {   /* which guest thread holds the CPU, sampled every ms */
+        if (ENV("RT_THREADPROF")) {   /* which guest thread holds the CPU, sampled every ms */
             static u32 tid[64], cnt[64];
             static int nt, total;
             u32 t = mr32(0x800000E4u);
@@ -410,7 +410,7 @@ void rt_timer_start(void) {
         g_irq_pending = 1;   /* every back-edge advances virtual time and checks for interrupts */
         return;
     }
-    if (getenv("RT_NO_ASYNC"))
+    if (ENV("RT_NO_ASYNC"))
         return;   /* debugging: interrupts only at OS safe points */
     signal(SIGUSR1, on_usr1);
     pthread_t t;

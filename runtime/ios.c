@@ -15,7 +15,7 @@
 #include "names.h"
 
 #define HLE(name) void FN_##name(CPU *c)
-#define LOG(...) do { if (getenv("RT_HLELOG")) fprintf(stderr, __VA_ARGS__); } while (0)
+#define LOG(...) do { if (ENV("RT_HLELOG")) fprintf(stderr, __VA_ARGS__); } while (0)
 
 #define TITLE_ID 0x00010000524D4245ull   /* RMBE */
 enum { FS_INVALID = -101, FS_ACCESS = -102, FS_EXISTS = -105, FS_NOEXISTS = -106, FS_NOTEMPTY = -115, IPC_ENOENT = -6, IPC_EINVAL = -4 };
@@ -97,9 +97,9 @@ static void write_default_setting(const char *path) {
 }
 
 void ios_init(void) {
-    const char *r = getenv("RT_NAND");
+    const char *r = ENV("RT_NAND");
     if (r) snprintf(nand_root, sizeof nand_root, "%s", r);
-    else snprintf(nand_root, sizeof nand_root, "%s/.local/share/mss-recomp/nand", getenv("HOME") ? getenv("HOME") : ".");
+    else snprintf(nand_root, sizeof nand_root, "%s/.local/share/mss-recomp/nand", ENV("HOME") ? ENV("HOME") : ".");
     char p[700];
     host_path("/shared2/sys", p, sizeof p);
     mkdirs(p);

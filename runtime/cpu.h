@@ -1,5 +1,6 @@
 /* Guest CPU state and memory access for statically recompiled Gekko (PowerPC 750CL) code. */
 #pragma once
+#include <emmintrin.h>
 #include <math.h>
 #include <stdint.h>
 #include <string.h>
@@ -92,12 +93,16 @@ static inline double fctiwz(double d) {
     else i = (s32)d;
     return u2d(0xFFF8000000000000ull | (u32)i);
 }
+/* environment switches are read once per call site: getenv is a linear scan and some of these sit
+ * on per-draw / per-instruction paths */
+#define ENV(name) ({ static const char *env_v_; static int env_i_; if (!env_i_) { env_v_ = getenv(name); env_i_ = 1; } env_v_; })
+
 static inline double fctiw(double d) {
     s32 i;
     if (isnan(d)) i = INT32_MIN;
     else if (d >= 2147483647.0) i = INT32_MAX;
     else if (d <= -2147483648.0) i = INT32_MIN;
-    else i = (s32)nearbyint(d);
+    else i = _mm_cvtsd_si32(_mm_set_sd(d));   /* current rounding mode (nearest), inline */
     return u2d(0xFFF8000000000000ull | (u32)i);
 }
 static inline double fres(double d) { return rs(1.0 / d); }

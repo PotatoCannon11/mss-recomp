@@ -8,7 +8,7 @@
 
 #define HLE(name) void FN_##name(CPU *c)
 #define STUB(name, val) HLE(name) { c->r[3] = (u32)(val); }
-#define LOG(...) do { if (getenv("RT_HLELOG")) fprintf(stderr, __VA_ARGS__); } while (0)
+#define LOG(...) do { if (ENV("RT_HLELOG")) fprintf(stderr, __VA_ARGS__); } while (0)
 
 static const char *g_disc_root;
 
@@ -69,7 +69,7 @@ static u64 dvd_busy_until;
 static u64 tb_now(void) { u32 lo = ppc_mftb(NULL, 0); return ((u64)ppc_mftb(NULL, 1) << 32) | lo; }
 static void dvd_defer(u32 block, u32 cb, u32 result) {
     u64 now = tb_now(), start = dvd_busy_until > now ? dvd_busy_until : now;
-    double secs = getenv("RT_DVD_FAST") ? 0 : 0.02 + result / (4.0 * 1024 * 1024);
+    double secs = ENV("RT_DVD_FAST") ? 0 : 0.02 + result / (4.0 * 1024 * 1024);
     u64 due = start + (u64)(secs * TB_CLOCK);
     dvd_busy_until = due;
     if (dvd_n < 64) dvd_q[dvd_n++] = (DvdDone){block, cb, result, due};

@@ -245,7 +245,7 @@ static void gen_fs(char **out, const PipeKey *k) {
     }
     A(" vec4 res = clamp(prev, 0.0, 1.0);\n");
     {
-        const char *dbg = getenv("RT_DEBUG_SHADE");
+        const char *dbg = ENV("RT_DEBUG_SHADE");
         if (dbg && !strcmp(dbg, "white")) A(" res = vec4(1.0);\n");
         else if (dbg && !strcmp(dbg, "col")) A(" res = vec4(v_col0.rgb, 1.0);\n");
         else if (dbg && !strcmp(dbg, "alpha")) A(" res = vec4(res.aaa, 1.0);\n");
@@ -260,7 +260,7 @@ static void gen_fs(char **out, const PipeKey *k) {
         char t0[64], t1[64];
         if (c0 == 0 || c0 == 7) snprintf(t0, sizeof t0, "%s", op[c0]); else snprintf(t0, sizeof t0, "(q8(res.a) %s alpharef.x)", op[c0]);
         if (c1 == 0 || c1 == 7) snprintf(t1, sizeof t1, "%s", op[c1]); else snprintf(t1, sizeof t1, "(q8(res.a) %s alpharef.y)", op[c1]);
-        if (!(c0 == 7 && c1 == 7) && !getenv("RT_NOALPHATEST"))
+        if (!(c0 == 7 && c1 == 7) && !ENV("RT_NOALPHATEST"))
             A(" if (!((%s) %s (%s))) discard;\n", t0, lg[logic], t1);
     }
     {
@@ -329,7 +329,7 @@ static GLuint get_prog(const PipeKey *k) {
         fprintf(stderr, "gfx: link error: %s\n", log);
         exit(1);
     }
-    if (getenv("RT_SHADERS"))
+    if (ENV("RT_SHADERS"))
         fprintf(stderr, "---- program %d\n%s\n%s\n", nprogs, vs, fs);
     free(vs);
     free(fs);
@@ -494,11 +494,11 @@ static void bind_texture(int map) {
             }
             e = &texcache[ntex++];
             *e = (TexEntry){addr, (u32)fmt, (u32)w, (u32)h, tlut_off, hsh, 0, 0, 0};
-            if (getenv("RT_SHADERS"))
+            if (ENV("RT_SHADERS"))
                 fprintf(stderr, "texture %08X fmt %d %dx%d tlut %05X/%d\n", addr, fmt, w, h, tlut_off, tlut_fmt);
             u8 *rgba = calloc(4, (size_t)w * h);
             decode_tex(MEM + addr, fmt, w, h, tlut_off, tlut_fmt, rgba);
-            const char *td = getenv("RT_TEXDUMP");
+            const char *td = ENV("RT_TEXDUMP");
             if (td) {
                 char path[512];
                 snprintf(path, sizeof path, "%s/tex_%08X_f%d_%dx%d.ppm", td, addr, fmt, w, h);
@@ -601,7 +601,7 @@ static void fill_uniforms(Uniforms *u) {
 static void apply_state(void) {
     static u32 last[6], valid;
     static int forcemask = -1;
-    if (forcemask < 0) forcemask = getenv("RT_FORCEMASK") != NULL;
+    if (forcemask < 0) forcemask = ENV("RT_FORCEMASK") != NULL;
     u32 now[6] = {g_gpu.bp[0x00] & (3 << 14), g_gpu.bp[0x40], g_gpu.bp[0x41], g_gpu.bp[0x20], g_gpu.bp[0x21], g_gpu.state_epoch};
     if (valid && !memcmp(now, last, sizeof now)) return;
     memcpy(last, now, sizeof now);
@@ -609,7 +609,7 @@ static void apply_state(void) {
     u32 gen = g_gpu.bp[0x00];
     int cull = (gen >> 14) & 3;
     static int nocull = -1;
-    if (nocull < 0) nocull = getenv("RT_NOCULL") != NULL;
+    if (nocull < 0) nocull = ENV("RT_NOCULL") != NULL;
     if (nocull) cull = 0;
     if (cull == 0)
         glDisable(GL_CULL_FACE);
@@ -621,7 +621,7 @@ static void apply_state(void) {
     u32 z = g_gpu.bp[0x40];
     static const GLenum zf[8] = {GL_NEVER, GL_LESS, GL_EQUAL, GL_LEQUAL, GL_GREATER, GL_NOTEQUAL, GL_GEQUAL, GL_ALWAYS};
     static int nodepth = -1;
-    if (nodepth < 0) nodepth = getenv("RT_NODEPTH") != NULL;
+    if (nodepth < 0) nodepth = ENV("RT_NODEPTH") != NULL;
     if ((z & 1) && !nodepth) { glEnable(GL_DEPTH_TEST); glDepthFunc(zf[(z >> 1) & 7]); }
     else glDisable(GL_DEPTH_TEST);
     glDepthMask((z >> 4) & 1);
@@ -778,7 +778,7 @@ void gfx_draw(int prim, const GXVertex *v, u32 n) {
     }
     }
     static long dump_frame = -2;
-    if (dump_frame == -2) dump_frame = getenv("RT_DRAWDUMP") ? atol(getenv("RT_DRAWDUMP")) : -1;
+    if (dump_frame == -2) dump_frame = ENV("RT_DRAWDUMP") ? atol(ENV("RT_DRAWDUMP")) : -1;
     if (dump_frame == 0 && g_gpu.last_frame_draws > 1000) dump_frame = (long)g_gpu.frames + 1;   /* auto */
     if ((long)g_gpu.frames == dump_frame) {
         fprintf(stderr, "draw prim %d n %u stages %d texgens %d chans %d ind %d | cc0 %06X ca0 %06X tref0 %06X | alpha %06X blend %06X z %06X | colctl %08X %08X | fog %06X",
@@ -800,7 +800,7 @@ void gfx_draw(int prim, const GXVertex *v, u32 n) {
         fprintf(stderr, "\n");
     }
     static int pick_x = -1, pick_y;
-    if (pick_x == -1) { const char *pk = getenv("RT_PICK"); pick_x = -2; if (pk) sscanf(pk, "%d,%d", &pick_x, &pick_y); }
+    if (pick_x == -1) { const char *pk = ENV("RT_PICK"); pick_x = -2; if (pk) sscanf(pk, "%d,%d", &pick_x, &pick_y); }
     if (pick_x >= 0 && (long)g_gpu.frames == dump_frame) {
         gfx_batch_flush();
         static u8 last[4];
@@ -897,7 +897,7 @@ void gfx_present(int sx, int sy, int sw, int sh) {
     invalidate_gl_caches();
     static struct timespec t0;
     static u64 f0;
-    if (getenv("RT_FPS") && g_gpu.frames % 120 == 0) {
+    if (ENV("RT_FPS") && g_gpu.frames % 120 == 0) {
         struct timespec t;
         clock_gettime(CLOCK_MONOTONIC, &t);
         if (f0) fprintf(stderr, "fps %.1f (frame %llu, %llu draws)\n", (g_gpu.frames - f0) / ((t.tv_sec - t0.tv_sec) + (t.tv_nsec - t0.tv_nsec) / 1e9),
@@ -905,12 +905,12 @@ void gfx_present(int sx, int sy, int sw, int sh) {
         t0 = t;
         f0 = g_gpu.frames;
     }
-    const char *dir = getenv("RT_FRAMES");
-    int every = getenv("RT_FRAMES_EVERY") ? atoi(getenv("RT_FRAMES_EVERY")) : 60;
+    const char *dir = ENV("RT_FRAMES");
+    int every = ENV("RT_FRAMES_EVERY") ? atoi(ENV("RT_FRAMES_EVERY")) : 60;
     if (sw > EFB_W - sx) sw = EFB_W - sx;
     if (sh > EFB_H - sy) sh = EFB_H - sy;
     static long ffrom = -2, fto;
-    if (ffrom == -2) { ffrom = getenv("RT_FRAMES_FROM") ? atol(getenv("RT_FRAMES_FROM")) : 0; fto = getenv("RT_FRAMES_TO") ? atol(getenv("RT_FRAMES_TO")) : 1L << 40; }
+    if (ffrom == -2) { ffrom = ENV("RT_FRAMES_FROM") ? atol(ENV("RT_FRAMES_FROM")) : 0; fto = ENV("RT_FRAMES_TO") ? atol(ENV("RT_FRAMES_TO")) : 1L << 40; }
     if (dir && every > 0 && g_gpu.frames % every == 0 && (long)g_gpu.frames >= ffrom && (long)g_gpu.frames <= fto) {
         glBindFramebuffer(GL_READ_FRAMEBUFFER, efb_fbo);
         glPixelStorei(GL_PACK_ALIGNMENT, 1);
@@ -942,7 +942,7 @@ void gfx_efb_copy(u32 cmd) {
     glDisable(GL_SCISSOR_TEST);
     if (to_xfb) {
         g_gpu.frames++;
-        if (getenv("RT_GFXLOG"))
+        if (ENV("RT_GFXLOG"))
             fprintf(stderr, "frame %llu: %llu draws, %llu vertices, %d programs, %d textures, %llu DL calls, %d bad ops, %llu preloads\n", (unsigned long long)g_gpu.frames,
                     (unsigned long long)draws, (unsigned long long)verts_total, nprogs, ntex, (unsigned long long)g_gpu.ndl, g_gpu.bad_ops, (unsigned long long)g_gpu.preloads);
         g_gpu.last_frame_draws = draws;
@@ -951,7 +951,7 @@ void gfx_efb_copy(u32 cmd) {
     } else if (sw > 0 && sh > 0 && sx + sw <= EFB_W && sy + sh <= EFB_H) {
         /* EFB -> texture: kept as a GL texture found by its guest address */
         int half = (cmd >> 9) & 1;
-        if (getenv("RT_EFBLOG"))
+        if (ENV("RT_EFBLOG"))
             fprintf(stderr, "efb copy frame %llu: %d,%d %dx%d -> %08X fmt %u%s half %d clear %d | pixfmt %u\n", (unsigned long long)g_gpu.frames,
                     sx, sy, sw, sh, dst, (((cmd >> 3) & 15) / 2 + (((cmd >> 3) & 1) * 8)), (cmd >> 15) & 1 ? "(I)" : "", half, clear, g_gpu.bp[0x43] & 7);
         int tw = half ? (sw + 1) / 2 : sw, th = half ? (sh + 1) / 2 : sh;
@@ -981,8 +981,8 @@ void gfx_efb_copy(u32 cmd) {
         glColorMask((pe >> 3) & 1, (pe >> 3) & 1, (pe >> 3) & 1, (pe >> 4) & 1);
         glDepthMask((g_gpu.bp[0x40] >> 4) & 1);
         glClearColor((ar & 255) / 255.f, ((gb >> 8) & 255) / 255.f, (gb & 255) / 255.f, ((ar >> 8) & 255) / 255.f);
-        if (getenv("RT_CLEARDEBUG")) glClearColor(1, 0, 1, 1);
-        if (getenv("RT_CLEARDEBUG")) glClearColor(1, 0, 1, 1);
+        if (ENV("RT_CLEARDEBUG")) glClearColor(1, 0, 1, 1);
+        if (ENV("RT_CLEARDEBUG")) glClearColor(1, 0, 1, 1);
         glClearDepth((zv & 0xFFFFFF) / 16777215.0);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         glDisable(GL_SCISSOR_TEST);

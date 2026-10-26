@@ -217,7 +217,7 @@ static void lc_dma(CPU *c) {
 }
 
 void ppc_mtspr(CPU *c, int spr, u32 v) {
-    if (spr == 920 && getenv("RT_HID2LOG")) fprintf(stderr, "mtspr HID2 = %08X (lr %08X)\n", v, c->lr);
+    if (spr == 920 && ENV("RT_HID2LOG")) fprintf(stderr, "mtspr HID2 = %08X (lr %08X)\n", v, c->lr);
     c->spr[spr] = v;
     if (spr == 22)
         rt_set_dec(v);
@@ -225,7 +225,7 @@ void ppc_mtspr(CPU *c, int spr, u32 v) {
         lc_dma(c);
 }
 u32 ppc_mfspr(CPU *c, int spr) {
-    if (spr == 920 && getenv("RT_HID2LOG")) fprintf(stderr, "mfspr HID2 = %08X (lr %08X)\n", c->spr[920], c->lr);
+    if (spr == 920 && ENV("RT_HID2LOG")) fprintf(stderr, "mfspr HID2 = %08X (lr %08X)\n", c->spr[920], c->lr);
     if (spr == 22)
         return rt_get_dec();
     if (spr == 287)
@@ -263,8 +263,11 @@ void ppc_stswi(CPU *c, int rs, u32 ea, int n) {
 }
 
 /* paired-single quantised load/store, per GQR type/scale */
+static double pow2_tab[65];   /* 2^n for n = -32..32 (GQR scales are 6-bit signed, used either way) */
+static inline double pow2i(int n) { return pow2_tab[n + 32]; }
+__attribute__((constructor)) static void pow2_init(void) { for (int n = -32; n <= 32; n++) pow2_tab[n + 32] = ldexp(1.0, n); }
 static double dequant(u32 raw, int type, int scale) {
-    double s = ldexp(1.0, -scale);
+    double s = pow2i(-scale);
     switch (type) {
     case 4: return (u8)raw * s;
     case 5: return (u16)raw * s;
@@ -274,7 +277,7 @@ static double dequant(u32 raw, int type, int scale) {
     }
 }
 static u32 quant(double v, int type, int scale) {
-    double x = v * ldexp(1.0, scale);
+    double x = v * pow2i(scale);
     switch (type) {
     case 4: return x <= 0 ? 0 : x >= 255 ? 255 : (u32)x;
     case 5: return x <= 0 ? 0 : x >= 65535 ? 65535 : (u32)x;
@@ -323,7 +326,7 @@ static int prof_slot(u32 addr) { return (int)(((addr - 0x80000000u) >> 2) & 0x3F
 void prof_dump(void) {
     if (!prof_cnt) return;
     fprintf(stderr, "---- hottest functions\n");
-    int top = getenv("RT_PROFILE_TOP") ? atoi(getenv("RT_PROFILE_TOP")) : 40;
+    int top = ENV("RT_PROFILE_TOP") ? atoi(ENV("RT_PROFILE_TOP")) : 40;
     for (int k = 0; k < top; k++) {
         int best = -1;
         for (int i = 0; i < (1 << 22); i++) if (prof_cnt[i] && (best < 0 || prof_cnt[i] > prof_cnt[best])) best = i;
@@ -338,7 +341,7 @@ static u32 logcall[32];
 static int nlogcall = -1;
 static void logcall_init(void) {
     nlogcall = 0;
-    const char *s = getenv("RT_LOGCALL");
+    const char *s = ENV("RT_LOGCALL");
     while (s && *s && nlogcall < 32) {
         logcall[nlogcall++] = (u32)strtoul(s, (char **)&s, 16);
         if (*s == ',') s++;
@@ -353,7 +356,7 @@ static void print_arg(u32 v) {
 static u8 *coverage;
 void coverage_dump(void) {
     if (!coverage) return;
-    FILE *f = fopen(getenv("RT_COVERAGE"), "w");
+    FILE *f = fopen(ENV("RT_COVERAGE"), "w");
     for (u32 i = 0; f && i < (1u << 22); i++)
         if (coverage[i]) fprintf(f, "%08X\n", 0x80000000u + (i << 2));
     if (f) fclose(f);
@@ -361,7 +364,7 @@ void coverage_dump(void) {
 void trace_enter(u32 addr, u32 lr) {
     ring[ring_pos++ % RING] = addr;
     static int cov = -1;
-    if (cov < 0) { cov = getenv("RT_COVERAGE") != NULL; if (cov) coverage = calloc(1 << 22, 1); }
+    if (cov < 0) { cov = ENV("RT_COVERAGE") != NULL; if (cov) coverage = calloc(1 << 22, 1); }
     if (cov) coverage[((addr - 0x80000000u) >> 2) & 0x3FFFFF] = 1;
     if (nlogcall < 0) logcall_init();
     for (int i = 0; i < nlogcall; i++)
@@ -370,10 +373,10 @@ void trace_enter(u32 addr, u32 lr) {
             for (int k = 3; k <= 6; k++) print_arg(g_cpu.r[k]);
             fprintf(stderr, "\n");
         }
-    if (callers_of == 1) callers_of = getenv("RT_CALLERS") ? (u32)strtoul(getenv("RT_CALLERS"), NULL, 16) : 0;
+    if (callers_of == 1) callers_of = ENV("RT_CALLERS") ? (u32)strtoul(ENV("RT_CALLERS"), NULL, 16) : 0;
     static u32 cal_lo = 1, cal_hi;
     if (cal_lo == 1) {
-        const char *e = getenv("RT_CALLEES_OF");   /* lo-hi: count functions called from code in this range */
+        const char *e = ENV("RT_CALLEES_OF");   /* lo-hi: count functions called from code in this range */
         cal_lo = 0;
         if (e) { cal_lo = (u32)strtoul(e, (char **)&e, 16); cal_hi = *e == '-' ? (u32)strtoul(e + 1, NULL, 16) : cal_lo + 4; }
     }
@@ -390,13 +393,13 @@ void trace_enter(u32 addr, u32 lr) {
         return;
     }
     static u32 prof_thread = 1;
-    if (prof_thread == 1) prof_thread = getenv("RT_PROFILE_THREAD") ? (u32)strtoul(getenv("RT_PROFILE_THREAD"), NULL, 16) : 0;
+    if (prof_thread == 1) prof_thread = ENV("RT_PROFILE_THREAD") ? (u32)strtoul(ENV("RT_PROFILE_THREAD"), NULL, 16) : 0;
     if (!callers_of && g_prof_on && (!prof_thread || mr32(0x800000E4u) == prof_thread)) {
         if (!prof_cnt) prof_cnt = calloc(1 << 22, 4);
         prof_cnt[prof_slot(addr)]++;
     }
     if (trace_on < 0)
-        trace_on = getenv("RT_TRACE") != NULL;
+        trace_on = ENV("RT_TRACE") != NULL;
     if (trace_on)
         fprintf(stderr, "-> %08X %s\n", addr, fn_name(addr));
 }
@@ -456,7 +459,7 @@ int main(int argc, char **argv) {
     CPU *c = &g_cpu;
     c->msr = 0x00002032;   /* FP, IR/DR on, interrupts off as after the apploader */
     c->lr = 0;
-    g_deterministic = getenv("RT_DETERMINISTIC") != NULL;
+    g_deterministic = ENV("RT_DETERMINISTIC") != NULL;
     rt_timer_start();
     void hostprof_start(void);
     hostprof_start();

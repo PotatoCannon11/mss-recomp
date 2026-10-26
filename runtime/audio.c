@@ -92,7 +92,7 @@ static void mix_one(u32 m, u32 ctrl, int bit_on, int bit_delta, u32 voff, u32 do
 
 static int axlog = -1, axlog_frame;
 static void process_voice(u32 pb) {
-    if (axlog < 0) axlog = getenv("RT_AXLOG") != NULL;
+    if (axlog < 0) axlog = ENV("RT_AXLOG") != NULL;
     if (axlog && axlog_frame % 333 == 0)
         fprintf(stderr, "ax: pb %08X state %u type %u fmt %u cur %08X end %08X loop %08X/%u ratio %08X vol %04X mix %08X L %04X R %04X\n", pb,
                 r16(pb + 0x10), r16(pb + 0x12), r16(pb + 0x70), (u32)r16(pb + 0x7A) << 16 | r16(pb + 0x7C),
@@ -211,7 +211,7 @@ static void audio_open(void) {
     static int tried;
     if (tried) return;
     tried = 1;
-    const char *w = getenv("RT_WAV");
+    const char *w = ENV("RT_WAV");
     if (w && (wav = fopen(w, "wb"))) {
         u8 hdr[44] = {0};
         fwrite(hdr, 1, 44, wav);
@@ -219,7 +219,7 @@ static void audio_open(void) {
         signal(SIGTERM, on_term);
         signal(SIGINT, on_term);
     }
-    if (getenv("RT_HEADLESS") || (!getenv("DISPLAY") && !getenv("WAYLAND_DISPLAY"))) return;
+    if (ENV("RT_HEADLESS") || (!ENV("DISPLAY") && !ENV("WAYLAND_DISPLAY"))) return;
     sdl = dlopen("libSDL2-2.0.so.0", RTLD_NOW);
     if (!sdl) return;
     int (*init)(u32) = (int (*)(u32))dlsym(sdl, "SDL_InitSubSystem");
@@ -307,7 +307,7 @@ static void run_list(u32 list) {
         case 13: for (int i = 0; i < 4; i++) A32(); break;   /* remote speakers */
         case 14: return;   /* END */
         default:
-            if (getenv("RT_HLELOG")) fprintf(stderr, "ax: unknown command %u\n", cmd);
+            if (ENV("RT_HLELOG")) fprintf(stderr, "ax: unknown command %u\n", cmd);
             return;
         }
 #undef A32

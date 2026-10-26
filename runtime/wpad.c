@@ -19,7 +19,7 @@ static int announced;
  * either sign), P / Q (hold pointing up / down); e.g. "2200-2205:A" */
 static u64 ticks;
 static void scripted_input(void) {
-    const char *s = getenv("RT_INPUT");
+    const char *s = ENV("RT_INPUT");
     if (!s) return;
     u16 b = 0;
     int swing = 0, pose = 0;
@@ -46,7 +46,7 @@ static void scripted_input(void) {
     }
     g_pad.buttons = b;
     /* pointer, -1..1; without RT_IR it points off-screen so scripts navigate with the d-pad */
-    g_pad.ir_valid = getenv("RT_IR") && sscanf(getenv("RT_IR"), "%f,%f", &g_pad.ir_x, &g_pad.ir_y) == 2;
+    g_pad.ir_valid = ENV("RT_IR") && sscanf(ENV("RT_IR"), "%f,%f", &g_pad.ir_x, &g_pad.ir_y) == 2;
     /* P / Q: hold the remote pointing up / down (gravity along the remote's length) instead of flat */
     g_pad.rest_y = (float)pose; g_pad.rest_z = pose ? 0.0f : 1.0f;
     if (swing && !g_pad.swing_t) { wpad_start_swing(); g_pad.gesture = swing - 1; }
@@ -173,7 +173,7 @@ HLE(WPADRead) {
             mw8(o + 6, (u8)k); /* traceID */
         }
     }
-    if (getenv("RT_PADLOG") && c->lr == 0x8050B6E0) {   /* debug: the game's KPADStatus (read just before) */
+    if (ENV("RT_PADLOG") && c->lr == 0x8050B6E0) {   /* debug: the game's KPADStatus (read just before) */
         u32 k = st - 1056;
         float f[8];
         for (int i = 0; i < 8; i++) { u32 v = mr32(k + 0xC + 4 * i); memcpy(&f[i], &v, 4); }
