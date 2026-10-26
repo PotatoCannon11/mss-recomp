@@ -99,3 +99,9 @@ Check in over SSH:
 - RT_VIDEO stretches the 448-line image to the full frame like the VI (no black strip).
 - Clock: the Wii clock is local time (was UTC, so save times were 4 h off here).
 - Next: desktop play test (mouse pointer, Space/C gestures), more scene comparisons vs Dolphin.
+- Windowed test on the private display (SDL window, XTest input): clicking A during the intro
+  movie skips to the title and the game keeps running at 60 fps, so the earlier desktop freeze did
+  not reproduce. A+B (both mouse buttons) works, and click-to-select works.
+- Open: the menu hand cursor follows the mouse for the first couple of moves at file select, then
+  stays put, although KPAD's pointer keeps tracking (pos and dpd_valid=2 in RT_PADLOG). The game's
+  own cursor logic (KPAD pos is read via fn_8050C15C) needs a look. The d-pad works meanwhile.

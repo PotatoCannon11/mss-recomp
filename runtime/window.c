@@ -81,6 +81,7 @@ void window_poll(void) {
     g_pad.ir_x = ww ? 2.0f * mx / ww - 1.0f : 0;
     g_pad.ir_y = wh ? 2.0f * my / wh - 1.0f : 0;
     g_pad.ir_valid = 1;
+    if (ENV("RT_PADLOG")) { static int n; if (++n % 60 == 0) fprintf(stderr, "window: mouse %d,%d buttons %x win %dx%d\n", mx, my, mb, ww, wh); }
     static int space_was, c_was;
     if (k[44] && !space_was && !g_pad.swing_t) wpad_start_swing();   /* Space: swing */
     if (k[6] && !c_was && !g_pad.swing_t) wpad_start_gesture(1);     /* C: pitch throw */
