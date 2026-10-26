@@ -137,3 +137,13 @@ Check in over SSH:
   are g_cpu and don't say which host thread faulted. The fault handler now prints host rip/rsp and a
   native backtrace (addr2line with -g builds), to catch it next time.
 - Next: catch the crash with the new report and fix it; then baserunning input.
+
+## 2026-10-26 night (desk session)
+- FIX: progressive slowdown during long play (user report). Texture lookups were linear scans of a
+  cache that only grows (up to 4096 entries), twice per texture per frame. Now a hash index by guest
+  address; a 5-minute scripted match held 59-60 fps with no downward trend.
+- NEW: internal resolution scaling, RT_SCALE=N (EFB, depth, scissors, EFB copies at Nx; the game sees
+  native 640x528). Default 2 in a window, 1 headless. 3x verified clean (bloom/fog from EFB copies
+  upscale correctly). RT_FRAMES_HIRES=1 dumps frames at internal resolution.
+- Goal from the user: optimized enough for any resolution and upscaling (see memory).
+- Next: fps at 2x/3x/4x, per-frame cost hunting, Challenge crash, baserunning.
