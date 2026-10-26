@@ -991,8 +991,11 @@ void gfx_present(int sx, int sy, int sw, int sh) {
     if (ENV("RT_FPS") && g_gpu.frames % 120 == 0) {
         struct timespec t;
         clock_gettime(CLOCK_MONOTONIC, &t);
-        if (f0) fprintf(stderr, "fps %.1f (frame %llu, %llu draws)\n", (g_gpu.frames - f0) / ((t.tv_sec - t0.tv_sec) + (t.tv_nsec - t0.tv_nsec) / 1e9),
-                        (unsigned long long)g_gpu.frames, (unsigned long long)g_gpu.last_frame_draws);
+        static u64 busy0;
+        double secs = (t.tv_sec - t0.tv_sec) + (t.tv_nsec - t0.tv_nsec) / 1e9;
+        if (f0) fprintf(stderr, "fps %.1f (frame %llu, %llu draws, gpu thread %.0f%% busy)\n", (g_gpu.frames - f0) / secs,
+                        (unsigned long long)g_gpu.frames, (unsigned long long)g_gpu.last_frame_draws, (gpu_busy_ns - busy0) / 1e7 / secs);
+        busy0 = gpu_busy_ns;
         t0 = t;
         f0 = g_gpu.frames;
     }

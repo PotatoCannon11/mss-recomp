@@ -35,6 +35,7 @@ static void parse_stream(void);
  * and the window, parses and draws, and raises the token/finish interrupt flags. RT_DETERMINISTIC
  * (or RT_GPU_INLINE) keeps everything on the game thread. */
 int gpu_threaded;
+u64 gpu_busy_ns;   /* GPU thread time spent parsing/drawing (RT_FPS reports it per second) */
 #define RING (32u << 20)
 static u8 ring[RING];
 static _Atomic u32 ring_w, ring_r;   /* monotonic byte counters */
@@ -100,6 +101,8 @@ static void *gpu_main(void *arg) {
             atomic_store_explicit(&gpu_sleeping, 0, memory_order_release);
             continue;
         }
+        struct timespec b0;
+        clock_gettime(CLOCK_MONOTONIC, &b0);
         while (r != w) {
             u32 hdr, n;
             ring_get(r, &hdr, 4);
@@ -112,6 +115,9 @@ static void *gpu_main(void *arg) {
             if (stream_len >= stream_need) parse_stream();
         }
         atomic_store_explicit(&ring_r, r, memory_order_release);
+        struct timespec b1;
+        clock_gettime(CLOCK_MONOTONIC, &b1);
+        gpu_busy_ns += (u64)((b1.tv_sec - b0.tv_sec) * 1000000000L + (b1.tv_nsec - b0.tv_nsec));
     }
     return NULL;
 }
