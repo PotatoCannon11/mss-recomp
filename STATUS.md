@@ -85,3 +85,7 @@ Check in over SSH:
   one z+ without y+ (patterns at 0x80643770, axis bitmask table 0x80628398). T now produces that.
 - Desktop keys: Space = swing / pull up, C = throw.
 - Next: desktop play test; check the occasional black frame in recordings; renderer vs Dolphin.
+- Audio clipping check: done. The intro movie's level and clipping match Dolphin's DSP dump
+  (RMS 7214 vs 7247 / 8040 vs 7834, clipped samples 3/6 vs 3/5 per 5 s); Dolphin clips about
+  100 samples per 5 s on the title music too, so the hot mix is the game's own, not the AX mixer's.
+- Fades to black between plays (~1 s) are the game's transitions, not dropped frames.
