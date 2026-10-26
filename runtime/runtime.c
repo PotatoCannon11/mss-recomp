@@ -458,6 +458,8 @@ int main(int argc, char **argv) {
     c->lr = 0;
     g_deterministic = getenv("RT_DETERMINISTIC") != NULL;
     rt_timer_start();
+    void hostprof_start(void);
+    hostprof_start();
     fprintf(stderr, "boot: entry %08X (%s)\n", g_entry, fn_name(g_entry));
     call_indirect(c, g_entry);
     fprintf(stderr, "entry returned\n");

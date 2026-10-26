@@ -5,7 +5,8 @@ DOL ?= ../repo/orig/RMBE01/sys/main.dol
 SYMBOLS ?= ../repo/config/RMBE01/symbols.txt
 CC = gcc
 OPT ?= -O2
-EXTRA ?= -DTRACE
+EXTRA ?=
+# `make EXTRA=-DTRACE` builds the debug variant (function tracing, profiles, coverage, call logs)
 CFLAGS = $(OPT) -g0 -fno-strict-aliasing -fwrapv -ffp-contract=off -w -Iruntime -Ibuild/gen $(EXTRA)
 
 GEN_SRC = $(wildcard build/gen/gen_*.c)

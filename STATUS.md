@@ -31,3 +31,11 @@ Check in over SSH:
   Knights" loading -> in-stadium cutscene -> pitching tutorial. Contact sheet: build/match_reached.png
 - Clock now counts from 2000-01-01 like the Wii (real dates in saves).
 - Next: get through the tutorial into live pitching/batting; tune motion (swing/pitch) input.
+
+## 2026-10-26 night
+- Performance: 3D gameplay went from 12-19 fps to 30-48 fps (release build without tracing,
+  texture/program hash caches, per-frame texture validation, uniform/state change skipping,
+  draw batching into indexed triangle lists). Debug build: `make EXTRA=-DTRACE`.
+- Live gameplay renders correctly with batching: PLAY BALL, pitches, hits, fielding cameras.
+- Tools: RT_FPS, RT_THREADPROF (guest thread time), RT_HOSTPROF (+_FROM frame) + tools/hostprof.py.
+- Next: confirm hardware frame rate in Dolphin; vertex decode speed; desktop input test.

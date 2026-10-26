@@ -46,8 +46,6 @@ typedef struct {
     float pnmtx, texmtx[8];
 } GLVertex;   /* attribute locations: 0 pos, 1 nrm, 2-3 colours, 4-7 texcoord pairs, 8 pnmtx, 9-10 texmtx */
 
-#define MAXV 200000
-static GLVertex vbuf[MAXV];
 
 /* ---------------------------------------------------------------- shader generation */
 
@@ -295,12 +293,24 @@ static GLuint compile(GLenum type, const char *src) {
     return s;
 }
 
+#define PHASH 8192
+static int prog_slot[PHASH];   /* program index + 1, open addressing */
+static u32 key_hash(const PipeKey *k) {
+    const u32 *w = (const u32 *)k;
+    u32 h = 2166136261u;
+    for (size_t i = 0; i < sizeof *k / 4; i++) h = (h ^ w[i]) * 16777619u;
+    return h;
+}
 static GLuint get_prog(const PipeKey *k) {
     static int last = -1;
     if (last >= 0 && !memcmp(&progs[last].k, k, sizeof *k))
         return progs[last].prog;
-    for (int i = 0; i < nprogs; i++)
-        if (!memcmp(&progs[i].k, k, sizeof *k)) { last = i; return progs[i].prog; }
+    u32 hh = key_hash(k);
+    for (u32 j = 0; j < PHASH; j++) {
+        int sl = prog_slot[(hh + j) & (PHASH - 1)];
+        if (!sl) break;
+        if (!memcmp(&progs[sl - 1].k, k, sizeof *k)) { last = sl - 1; return progs[sl - 1].prog; }
+    }
     char *vs, *fs;
     gen_vs(&vs, k);
     gen_fs(&fs, k);
@@ -330,9 +340,11 @@ static GLuint get_prog(const PipeKey *k) {
         snprintf(nm, sizeof nm, "tex[%d]", i);
         glUniform1i(glGetUniformLocation(p, nm), i);
     }
-    if (nprogs == (int)(sizeof progs / sizeof *progs)) nprogs = 0;
+    if (nprogs == (int)(sizeof progs / sizeof *progs)) { nprogs = 0; memset(prog_slot, 0, sizeof prog_slot); }
     progs[nprogs].k = *k;
     progs[nprogs].prog = p;
+    for (u32 j = 0; j < PHASH; j++)
+        if (!prog_slot[(hh + j) & (PHASH - 1)]) { prog_slot[(hh + j) & (PHASH - 1)] = nprogs + 1; break; }
     last = nprogs++;
     return p;
 }
@@ -341,15 +353,16 @@ static GLuint get_prog(const PipeKey *k) {
 
 static u8 tmem_tlut[1 << 20];   /* TMEM: palettes are loaded here (BP 0x64/0x65), then indexed */
 
-typedef struct { u32 addr, fmt, w, h, tlut, hash; GLuint tex; int efb; } TexEntry;
+typedef struct { u32 addr, fmt, w, h, tlut, hash; GLuint tex; int efb; u32 mode0; } TexEntry;
 static TexEntry texcache[4096];
 static int ntex;
 
+/* change detection for cached textures: every byte of small textures, ~1024 spread samples of big ones */
 static u32 tex_hash(const u8 *p, u32 n) {
-    u32 h = 2166136261u, step = n > 8192 ? 37 : 1;
+    u32 h = 2166136261u, step = n > 2048 ? n / 1024 : 1;
     for (u32 i = 0; i < n; i += step)
         h = (h ^ p[i]) * 16777619u;
-    return h ^ n;
+    return h ^ n ^ p[n - 1];
 }
 
 static void rgb5a3(u16 v, u8 *o) {
@@ -439,6 +452,9 @@ static void decode_tex(const u8 *p, int fmt, int w, int h, u32 tlut_off, int tlu
         }
 }
 
+static GLuint tex_bound[8];   /* texture currently bound per unit (cleared when others bind) */
+static void invalidate_gl_caches(void) { memset(tex_bound, 0, sizeof tex_bound); g_gpu.state_epoch++; }
+
 static void bind_texture(int map) {
     int bank = map < 4 ? 0 : 0x20, i = map & 3;
     u32 mode0 = g_gpu.bp[0x80 + bank + i], img0 = g_gpu.bp[0x88 + bank + i], img3 = g_gpu.bp[0x94 + bank + i];
@@ -446,9 +462,22 @@ static void bind_texture(int map) {
     int w = (img0 & 0x3FF) + 1, h = ((img0 >> 10) & 0x3FF) + 1, fmt = (img0 >> 20) & 15;
     u32 addr = (img3 & 0xFFFFFF) << 5;
     u32 tlut_off = (tlutr & 0x3FF) << 9, tlut_fmt = (tlutr >> 10) & 3;
+    GLuint *bound = tex_bound;
+    /* fast path: the same texture registers already validated this frame (and no EFB copy since) */
+    struct Fast { u32 img0, img3, tlut, mode0; u64 frame, gen; TexEntry *e; };
+    static struct Fast fast[1024];
+    u32 fh = ((img3 * 2654435761u) ^ img0 ^ (tlutr << 7)) & 1023;
+    struct Fast *fe = &fast[fh];
+    TexEntry *e = NULL;
+    if (fe->e && fe->img0 == img0 && fe->img3 == img3 && fe->tlut == tlutr && fe->frame == g_gpu.frames && fe->gen == g_gpu.efb_gen)
+        e = fe->e;
+    if (e) {
+        if (bound[map] != e->tex) { glActiveTexture(GL_TEXTURE0 + map); glBindTexture(GL_TEXTURE_2D, e->tex); bound[map] = e->tex; }
+        if (e->mode0 != mode0 + 1) goto params;
+        return;
+    }
     glActiveTexture(GL_TEXTURE0 + map);
     int bytes = tex_bytes(fmt, w, h);
-    TexEntry *e = NULL;
     for (int k = 0; k < ntex; k++)
         if (texcache[k].efb && texcache[k].addr == addr) { e = &texcache[k]; break; }
     if (!e) {
@@ -463,7 +492,7 @@ static void bind_texture(int map) {
                 ntex = 0;
             }
             e = &texcache[ntex++];
-            *e = (TexEntry){addr, (u32)fmt, (u32)w, (u32)h, tlut_off, hsh, 0, 0};
+            *e = (TexEntry){addr, (u32)fmt, (u32)w, (u32)h, tlut_off, hsh, 0, 0, 0};
             if (getenv("RT_SHADERS"))
                 fprintf(stderr, "texture %08X fmt %d %dx%d tlut %05X/%d\n", addr, fmt, w, h, tlut_off, tlut_fmt);
             u8 *rgba = calloc(4, (size_t)w * h);
@@ -486,6 +515,12 @@ static void bind_texture(int map) {
         }
     }
     glBindTexture(GL_TEXTURE_2D, e->tex);
+    bound[map] = e->tex;
+    *fe = (struct Fast){img0, img3, tlutr, mode0, g_gpu.frames, g_gpu.efb_gen, e};
+    if (e->mode0 == mode0 + 1) return;
+params:
+    glActiveTexture(GL_TEXTURE0 + map);
+    e->mode0 = mode0 + 1;
     static const GLint wrap[4] = {GL_CLAMP_TO_EDGE, GL_REPEAT, GL_MIRRORED_REPEAT, GL_REPEAT};
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrap[mode0 & 3]);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrap[(mode0 >> 2) & 3]);
@@ -494,6 +529,7 @@ static void bind_texture(int map) {
 }
 
 void gfx_load_tlut(void) {
+    gfx_batch_flush();
     u32 src = (g_gpu.bp[0x64] & 0xFFFFFF) << 5;
     u32 r = g_gpu.bp[0x65];
     u32 tmem = (r & 0x3FF) << 9, count = ((r >> 10) & 0x3FF) * 16 * 2;
@@ -560,6 +596,13 @@ static void fill_uniforms(Uniforms *u) {
 /* ---------------------------------------------------------------- render state */
 
 static void apply_state(void) {
+    static u32 last[6], valid;
+    static int forcemask = -1;
+    if (forcemask < 0) forcemask = getenv("RT_FORCEMASK") != NULL;
+    u32 now[6] = {g_gpu.bp[0x00] & (3 << 14), g_gpu.bp[0x40], g_gpu.bp[0x41], g_gpu.bp[0x20], g_gpu.bp[0x21], g_gpu.state_epoch};
+    if (valid && !memcmp(now, last, sizeof now)) return;
+    memcpy(last, now, sizeof now);
+    valid = 1;
     u32 gen = g_gpu.bp[0x00];
     int cull = (gen >> 14) & 3;
     static int nocull = -1;
@@ -589,7 +632,7 @@ static void apply_state(void) {
     } else
         glDisable(GL_BLEND);
     glColorMask((b >> 3) & 1, (b >> 3) & 1, (b >> 3) & 1, (b >> 4) & 1);
-    if (getenv("RT_FORCEMASK")) { glColorMask(1, 1, 1, 1); glDisable(GL_BLEND); }
+    if (forcemask) { glColorMask(1, 1, 1, 1); glDisable(GL_BLEND); }
     u32 s0 = g_gpu.bp[0x20], s1 = g_gpu.bp[0x21];
     int x0 = (int)((s0 >> 12) & 0x7FF) - 342, y0 = (int)(s0 & 0x7FF) - 342;
     int x1 = (int)((s1 >> 12) & 0x7FF) - 342, y1 = (int)(s1 & 0x7FF) - 342;
@@ -602,22 +645,36 @@ static void apply_state(void) {
 
 /* ---------------------------------------------------------------- draw */
 
+/* Batching: consecutive draws with the same program, textures, uniforms and render state are
+ * appended to one indexed triangle list and drawn with a single GL call. */
+#define MAXB (1 << 18)
+static GLVertex bverts[MAXB];
+static u32 bidx[MAXB * 3];
+static u32 nbv, nbi;
+static GLuint batch_prog;
+typedef struct { GLuint prog; u32 tex[8][4]; u32 st[5]; } BatchSig;
+static BatchSig cur_sig;
+static int have_sig;
+
+static void batch_flush(void) {
+    if (!nbi) { nbv = 0; return; }
+    glUseProgram(batch_prog);
+    glBindVertexArray(vao);
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    glBufferData(GL_ARRAY_BUFFER, nbv * sizeof(GLVertex), bverts, GL_STREAM_DRAW);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ibo);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, nbi * 4, bidx, GL_STREAM_DRAW);
+    glDrawElements(GL_TRIANGLES, nbi, GL_UNSIGNED_INT, 0);
+    nbv = nbi = 0;
+}
+void gfx_batch_flush(void) { batch_flush(); have_sig = 0; }
+
 void gfx_draw(int prim, const GXVertex *v, u32 n) {
     if (!ready || !n)
         return;
     draws++;
     verts_total += n;
-    if (n > MAXV / 2) n = MAXV / 2;
-    for (u32 i = 0; i < n; i++) {
-        GLVertex *o = &vbuf[i];
-        memcpy(o->pos, v[i].pos, 12);
-        memcpy(o->nrm, v[i].nrm, 12);
-        memcpy(o->col0, v[i].col[0], 16);
-        memcpy(o->col1, v[i].col[1], 16);
-        memcpy(o->tex, v[i].tex, sizeof o->tex);
-        o->pnmtx = (float)v[i].pnmtx;
-        for (int k = 0; k < 8; k++) o->texmtx[k] = (float)v[i].texmtx[k];
-    }
+    if (n > MAXB / 2) n = MAXB / 2;
     PipeKey k;
     memset(&k, 0, sizeof k);
     k.genmode = g_gpu.bp[0x00] & (15 | (15 << 10));
@@ -631,7 +688,92 @@ void gfx_draw(int prim, const GXVertex *v, u32 n) {
     for (int t = 0; t < ntg; t++) { k.texgen[t] = g_gpu.xfreg[0x40 + t]; k.postgen[t] = g_gpu.xfreg[0x50 + t]; }
     k.dualtex = g_gpu.xfreg[0x12] & 1;
     k.fog = g_gpu.bp[0xF1] & (7u << 21);
-    glUseProgram(get_prog(&k));
+    GLuint prog = get_prog(&k);
+    BatchSig sig;
+    memset(&sig, 0, sizeof sig);
+    sig.prog = prog;
+    for (int s = 0; s < ns; s++) {
+        u32 tref = k.tref[s >> 1] >> ((s & 1) * 12);
+        if ((tref >> 6) & 1) {
+            int m = tref & 7, bank = m < 4 ? 0 : 0x20;
+            sig.tex[m][0] = g_gpu.bp[0x80 + bank + (m & 3)] | 0x80000000u;
+            sig.tex[m][1] = g_gpu.bp[0x88 + bank + (m & 3)];
+            sig.tex[m][2] = g_gpu.bp[0x94 + bank + (m & 3)];
+            sig.tex[m][3] = g_gpu.bp[0x98 + bank + (m & 3)];
+        }
+    }
+    sig.st[0] = g_gpu.bp[0x00] & (3 << 14); sig.st[1] = g_gpu.bp[0x40]; sig.st[2] = g_gpu.bp[0x41];
+    sig.st[3] = g_gpu.bp[0x20]; sig.st[4] = g_gpu.bp[0x21];
+    int tri = prim <= 4;
+    if (!tri || g_gpu.udirty || !have_sig || memcmp(&sig, &cur_sig, sizeof sig) || nbv + n > MAXB || nbi + n * 3 > MAXB * 3) {
+        batch_flush();
+        cur_sig = sig;
+        have_sig = 1;
+        batch_prog = prog;
+        glUseProgram(prog);
+        for (int s = 0; s < ns; s++) {
+            u32 tref = k.tref[s >> 1] >> ((s & 1) * 12);
+            if ((tref >> 6) & 1) bind_texture(tref & 7);
+        }
+        static Uniforms u;
+        if (g_gpu.udirty) fill_uniforms(&u);
+        static Uniforms last_u;
+        static int have_u;
+        if (!have_u || memcmp(&u, &last_u, sizeof u)) {
+            glBindBuffer(GL_UNIFORM_BUFFER, ubo);
+            glBufferData(GL_UNIFORM_BUFFER, sizeof u, &u, GL_STREAM_DRAW);
+            glBindBufferBase(GL_UNIFORM_BUFFER, 0, ubo);
+            last_u = u;
+            have_u = 1;
+        }
+        g_gpu.udirty = 0;
+        glBindFramebuffer(GL_FRAMEBUFFER, efb_fbo);
+        glViewport(0, 0, EFB_W, EFB_H);
+        apply_state();
+    }
+    /* append vertices */
+    u32 base = nbv;
+    for (u32 i = 0; i < n; i++) {
+        GLVertex *o = &bverts[nbv++];
+        memcpy(o->pos, v[i].pos, 12);
+        memcpy(o->nrm, v[i].nrm, 12);
+        memcpy(o->col0, v[i].col[0], 16);
+        memcpy(o->col1, v[i].col[1], 16);
+        memcpy(o->tex, v[i].tex, sizeof o->tex);
+        o->pnmtx = (float)v[i].pnmtx;
+        for (int t = 0; t < 8; t++) o->texmtx[t] = (float)v[i].texmtx[t];
+    }
+    switch (prim) {
+    case 0: case 1:   /* quads */
+        for (u32 q = 0; q + 3 < n; q += 4) {
+            bidx[nbi++] = base + q; bidx[nbi++] = base + q + 1; bidx[nbi++] = base + q + 2;
+            bidx[nbi++] = base + q; bidx[nbi++] = base + q + 2; bidx[nbi++] = base + q + 3;
+        }
+        break;
+    case 2:
+        for (u32 t = 0; t + 2 < n; t += 3) { bidx[nbi++] = base + t; bidx[nbi++] = base + t + 1; bidx[nbi++] = base + t + 2; }
+        break;
+    case 3:   /* strip: keep the winding of every other triangle */
+        for (u32 t = 0; t + 2 < n; t++) {
+            if (t & 1) { bidx[nbi++] = base + t + 1; bidx[nbi++] = base + t; }
+            else { bidx[nbi++] = base + t; bidx[nbi++] = base + t + 1; }
+            bidx[nbi++] = base + t + 2;
+        }
+        break;
+    case 4:   /* fan */
+        for (u32 t = 1; t + 1 < n; t++) { bidx[nbi++] = base; bidx[nbi++] = base + t; bidx[nbi++] = base + t + 1; }
+        break;
+    default: {   /* lines / points: drawn on their own */
+        static const GLenum mode[8] = {0, 0, 0, 0, 0, GL_LINES, GL_LINE_STRIP, GL_POINTS};
+        glBindVertexArray(vao);
+        glBindBuffer(GL_ARRAY_BUFFER, vbo);
+        glBufferData(GL_ARRAY_BUFFER, n * sizeof(GLVertex), bverts + base, GL_STREAM_DRAW);
+        glDrawArrays(mode[prim], 0, n);
+        nbv = base;
+        have_sig = 0;
+        break;
+    }
+    }
     static long dump_frame = -2;
     if (dump_frame == -2) dump_frame = getenv("RT_DRAWDUMP") ? atol(getenv("RT_DRAWDUMP")) : -1;
     if (dump_frame == 0 && g_gpu.last_frame_draws > 1000) dump_frame = (long)g_gpu.frames + 1;   /* auto */
@@ -654,37 +796,10 @@ void gfx_draw(int prim, const GXVertex *v, u32 n) {
                 (g_gpu.cp[0x70 + vat] >> 14) & 7, v[0].col[0][0], v[0].col[0][1], v[0].col[0][2], v[0].col[0][3], (lo >> 11) & 3, (lo >> 9) & 3);
         fprintf(stderr, "\n");
     }
-    for (int s = 0; s < ns; s++) {
-        u32 tref = k.tref[s >> 1] >> ((s & 1) * 12);
-        if ((tref >> 6) & 1) bind_texture(tref & 7);
-    }
-    static Uniforms u;
-    fill_uniforms(&u);
-    glBindBuffer(GL_UNIFORM_BUFFER, ubo);
-    glBufferData(GL_UNIFORM_BUFFER, sizeof u, &u, GL_STREAM_DRAW);
-    glBindBufferBase(GL_UNIFORM_BUFFER, 0, ubo);
-    glBindFramebuffer(GL_FRAMEBUFFER, efb_fbo);
-    glViewport(0, 0, EFB_W, EFB_H);
-    apply_state();
-    glBindVertexArray(vao);
-    glBindBuffer(GL_ARRAY_BUFFER, vbo);
-    glBufferData(GL_ARRAY_BUFFER, n * sizeof(GLVertex), vbuf, GL_STREAM_DRAW);
-    static const GLenum mode[8] = {0, 0, GL_TRIANGLES, GL_TRIANGLE_STRIP, GL_TRIANGLE_FAN, GL_LINES, GL_LINE_STRIP, GL_POINTS};
-    if (prim <= 1) {
-        static u32 idx[MAXV * 3 / 2];
-        u32 m = 0;
-        for (u32 q = 0; q + 3 < n; q += 4) {
-            idx[m++] = q; idx[m++] = q + 1; idx[m++] = q + 2;
-            idx[m++] = q; idx[m++] = q + 2; idx[m++] = q + 3;
-        }
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ibo);
-        glBufferData(GL_ELEMENT_ARRAY_BUFFER, m * 4, idx, GL_STREAM_DRAW);
-        glDrawElements(GL_TRIANGLES, m, GL_UNSIGNED_INT, 0);
-    } else
-        glDrawArrays(mode[prim], 0, n);
     static int pick_x = -1, pick_y;
     if (pick_x == -1) { const char *pk = getenv("RT_PICK"); pick_x = -2; if (pk) sscanf(pk, "%d,%d", &pick_x, &pick_y); }
     if (pick_x >= 0 && (long)g_gpu.frames == dump_frame) {
+        gfx_batch_flush();
         static u8 last[4];
         u8 px[4];
         glReadPixels(pick_x, EFB_H - 1 - pick_y, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, px);
@@ -771,7 +886,20 @@ static void write_ppm(const char *dir, u64 frame, int sx, int sy, int w, int h) 
     fclose(f);
 }
 
+#include <time.h>
 void gfx_present(int sx, int sy, int sw, int sh) {
+    gfx_batch_flush();
+    invalidate_gl_caches();
+    static struct timespec t0;
+    static u64 f0;
+    if (getenv("RT_FPS") && g_gpu.frames % 120 == 0) {
+        struct timespec t;
+        clock_gettime(CLOCK_MONOTONIC, &t);
+        if (f0) fprintf(stderr, "fps %.1f (frame %llu, %llu draws)\n", (g_gpu.frames - f0) / ((t.tv_sec - t0.tv_sec) + (t.tv_nsec - t0.tv_nsec) / 1e9),
+                        (unsigned long long)g_gpu.frames, (unsigned long long)g_gpu.last_frame_draws);
+        t0 = t;
+        f0 = g_gpu.frames;
+    }
     const char *dir = getenv("RT_FRAMES");
     int every = getenv("RT_FRAMES_EVERY") ? atoi(getenv("RT_FRAMES_EVERY")) : 60;
     if (sw > EFB_W - sx) sw = EFB_W - sx;
@@ -789,6 +917,8 @@ void gfx_present(int sx, int sy, int sw, int sh) {
 void gfx_efb_copy(u32 cmd) {
     if (!ready)
         return;
+    gfx_batch_flush();
+    invalidate_gl_caches();
     u32 tl = g_gpu.bp[0x49], wh = g_gpu.bp[0x4A];
     int sx = tl & 0x3FF, sy = (tl >> 10) & 0x3FF, sw = (wh & 0x3FF) + 1, sh = ((wh >> 10) & 0x3FF) + 1;
     u32 dst = (g_gpu.bp[0x4B] & 0xFFFFFF) << 5;
@@ -818,7 +948,8 @@ void gfx_efb_copy(u32 cmd) {
             glGenTextures(1, &e->tex);
         }
         if (e) {
-            e->addr = dst; e->w = tw; e->h = th; e->efb = 1;
+            e->addr = dst; e->w = tw; e->h = th; e->efb = 1; e->mode0 = 0;
+            g_gpu.efb_gen++;
             glBindTexture(GL_TEXTURE_2D, e->tex);
             glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, tw, th, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
             efb_convert_copy(e->tex, cmd, sx, sy, sw, sh, tw, th);
@@ -843,7 +974,9 @@ void gfx_efb_copy(u32 cmd) {
 }
 
 void gfx_flush(void) {
-    if (ready) glFlush();
+    if (!ready) return;
+    gfx_batch_flush();
+    glFlush();
 }
 
 /* ---------------------------------------------------------------- init */

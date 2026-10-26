@@ -338,8 +338,10 @@ static void peek(void) {
 
 void ax_dump(void);
 void coverage_dump(void);
+void hostprof_dump(void);
 static void dump_threads(void) {
     coverage_dump();
+    hostprof_dump();
     peek();
     ax_dump();
     static const char *st[] = {"?", "READY", "RUNNING", "?", "WAITING", "?", "?", "?", "MORIBUND"};
@@ -383,6 +385,20 @@ static void *timer_thread(void *arg) {
         ms = (t.tv_sec - t0.tv_sec) * 1000 + (t.tv_nsec - t0.tv_nsec) / 1000000;
         if (dump_ms >= 0 && ms >= dump_ms && !dumped) { dumped = 1; dump_threads(); }
         if (dump_requested) { dump_requested = 0; dump_threads(); rt_backtrace(); }
+        if (getenv("RT_THREADPROF")) {   /* which guest thread holds the CPU, sampled every ms */
+            static u32 tid[64], cnt[64];
+            static int nt, total;
+            u32 t = mr32(0x800000E4u);
+            int i;
+            for (i = 0; i < nt && tid[i] != t; i++) ;
+            if (i == nt && nt < 64) tid[nt++] = t;
+            if (i < 64) cnt[i]++;
+            if (++total % 10000 == 0) {
+                fprintf(stderr, "threadprof:");
+                for (int k = 0; k < nt; k++) { fprintf(stderr, " %08X:%d%%", tid[k], cnt[k] * 100 / 10000); cnt[k] = 0; }
+                fprintf(stderr, " (frame %llu)\n", (unsigned long long)g_gpu.frames);
+            }
+        }
         if (p0 >= 0 && ms >= p0 && pstate == 0) { pstate = 1; g_prof_on = 1; }
         if (p1 >= 0 && ms >= p1 && pstate == 1) { pstate = 2; g_prof_on = 0; prof_dump(); }
     }

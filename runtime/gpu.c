@@ -198,6 +198,7 @@ static void load_cp(u8 reg, u32 v) {
 }
 
 static void load_xf(u32 addr, u32 n, const u8 *p) {
+    g_gpu.udirty = 1;
     for (u32 i = 0; i < n; i++) {
         u32 a = addr + i, v = (u32)p[4 * i] << 24 | p[4 * i + 1] << 16 | p[4 * i + 2] << 8 | p[4 * i + 3];
         if (a < 0x1000) g_gpu.xfmem[a] = v;
@@ -221,10 +222,12 @@ static void load_bp(u32 v) {
         return;
     }
     g_gpu.bp[reg] = (g_gpu.bp[reg] & ~mask) | (v & mask & 0xFFFFFF);
+    if (reg >= 0xE0 || reg == 0x43) g_gpu.udirty = 1;   /* TEV colours, fog, alpha refs */
     switch (reg) {
     case 0x45:   /* PE_DONE: draw done -> finish interrupt */
         if (v & 2) gfx_flush();
         g_gpu.irq_finish = 1;
+        g_irq_pending = 1;   /* deliver at the next back-edge, not the next timer tick */
         break;
     case 0x47:   /* PE_TOKEN: GXReadDrawSync reads it back from the PE token register */
         g_gpu.token = v & 0xFFFF;
@@ -234,6 +237,7 @@ static void load_bp(u32 v) {
         g_gpu.token = v & 0xFFFF;
         mw16(0xCC00100Eu, (u16)g_gpu.token);
         g_gpu.irq_token = 1;
+        g_irq_pending = 1;
         break;
     case 0x52:   /* PE_COPY_EXECUTE: EFB -> texture or XFB, optional clear */
         gfx_efb_copy(v & 0xFFFFFF);
@@ -332,4 +336,5 @@ void gpu_sync(void) { parse_stream(); }
 
 void gpu_init(void) {
     g_gpu.bpmask = 0xFFFFFF;
+    g_gpu.udirty = 1;
 }
