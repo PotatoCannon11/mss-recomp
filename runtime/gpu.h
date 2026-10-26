@@ -19,10 +19,14 @@ typedef struct {
 } GPUState;
 extern GPUState g_gpu;
 
+/* the vertex layout the GL renderer draws from; the command processor decodes GX vertices straight
+ * into it */
 typedef struct {
-    float pos[3], nrm[3], col[2][4], tex[8][2];
-    int pnmtx, texmtx[8], ntex, has_nrm, has_col;
-} GXVertex;
+    float pos[3], nrm[3], tex[8][2];
+    u8 col0[4], col1[4];   /* GX colours are 8-bit, so normalised bytes are exact */
+    u8 mtx[12];            /* [0] position matrix index, [4..11] texture matrix indices */
+} GLVertex;
+typedef void (*VertexFill)(GLVertex *out, u32 n, void *ctx);
 
 void gpu_init(void);
 void gpu_start(void);     /* renderer on its own thread (or inline when deterministic) */
@@ -35,7 +39,7 @@ void gp_write(u32 v, int size);
 
 /* renderer */
 void gfx_init(void);
-void gfx_draw(int prim, const GXVertex *v, u32 n);
+void gfx_draw(int prim, u32 n, VertexFill fill, void *ctx);   /* fill writes the n vertices */
 void gfx_efb_copy(u32 cmd);
 void gfx_flush(void);
 void gfx_load_tlut(void);

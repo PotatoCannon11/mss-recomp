@@ -249,13 +249,17 @@ static float rd_comp(const u8 *p, int fmt, float scale) {
     }
 }
 
-static void rd_color(const u8 *p, int fmt, float out[4]) {
+/* GX colour formats -> RGBA8 (bit replication, as the hardware expands them) */
+static void rd_color8(const u8 *p, int fmt, u8 out[4]) {
     switch (fmt) {
-    case 0: { u16 v = p[0] << 8 | p[1]; out[0] = ((v >> 11) & 31) / 31.f; out[1] = ((v >> 5) & 63) / 63.f; out[2] = (v & 31) / 31.f; out[3] = 1; break; }
-    case 1: case 2: out[0] = p[0] / 255.f; out[1] = p[1] / 255.f; out[2] = p[2] / 255.f; out[3] = 1; break;
-    case 3: { u16 v = p[0] << 8 | p[1]; out[0] = (v >> 12) / 15.f; out[1] = ((v >> 8) & 15) / 15.f; out[2] = ((v >> 4) & 15) / 15.f; out[3] = (v & 15) / 15.f; break; }
-    case 4: { u32 v = p[0] << 16 | p[1] << 8 | p[2]; out[0] = (v >> 18) / 63.f; out[1] = ((v >> 12) & 63) / 63.f; out[2] = ((v >> 6) & 63) / 63.f; out[3] = (v & 63) / 63.f; break; }
-    default: out[0] = p[0] / 255.f; out[1] = p[1] / 255.f; out[2] = p[2] / 255.f; out[3] = p[3] / 255.f; break;
+    case 0: { u16 v = p[0] << 8 | p[1]; u8 r = (v >> 11) & 31, g = (v >> 5) & 63, b = v & 31;
+              out[0] = (u8)(r << 3 | r >> 2); out[1] = (u8)(g << 2 | g >> 4); out[2] = (u8)(b << 3 | b >> 2); out[3] = 255; break; }
+    case 1: case 2: out[0] = p[0]; out[1] = p[1]; out[2] = p[2]; out[3] = 255; break;
+    case 3: { u16 v = p[0] << 8 | p[1];
+              out[0] = (u8)((v >> 12) * 17); out[1] = (u8)(((v >> 8) & 15) * 17); out[2] = (u8)(((v >> 4) & 15) * 17); out[3] = (u8)((v & 15) * 17); break; }
+    case 4: { u32 v = p[0] << 16 | p[1] << 8 | p[2]; u8 c[4] = {(u8)(v >> 18), (u8)((v >> 12) & 63), (u8)((v >> 6) & 63), (u8)(v & 63)};
+              for (int i = 0; i < 4; i++) out[i] = (u8)(c[i] << 2 | c[i] >> 4); break; }
+    default: memcpy(out, p, 4); break;
     }
 }
 
@@ -271,21 +275,23 @@ static const u8 *attr(const u8 **pp, int mode, int array) {
     return p;
 }
 
-static void decode_vertex(const u8 *p, const VtxFmt *f, GXVertex *v) {
-    memset(v, 0, sizeof *v);
-    v->pnmtx = (g_gpu.cp[0x30] & 63);   /* MATINDEX_A default */
-    if (f->pnmtx) v->pnmtx = *p++;
+/* decode one GX vertex straight into the renderer's vertex layout */
+static void decode_vertex(const u8 *p, const VtxFmt *f, GLVertex *v) {
+    u32 m30 = g_gpu.cp[0x30], m40 = g_gpu.cp[0x40];
+    v->mtx[0] = f->pnmtx ? *p++ : (u8)(m30 & 63);   /* MATINDEX_A default */
     for (int i = 0; i < 8; i++) {
-        int dflt = i < 4 ? (g_gpu.cp[0x30] >> (6 + 6 * i)) & 63 : (g_gpu.cp[0x40] >> (6 * (i - 4))) & 63;
-        v->texmtx[i] = f->texmtx[i] ? *p++ : dflt;
+        u8 dflt = (u8)(i < 4 ? (m30 >> (6 + 6 * i)) & 63 : (m40 >> (6 * (i - 4))) & 63);
+        v->mtx[4 + i] = f->texmtx[i] ? *p++ : dflt;
     }
+    v->pos[2] = 0;
     if (f->pos) {
         const u8 *q = attr(&p, f->pos, 0);
         float sc = 1.0f / (1 << f->pos_shift);
         int cs = comp_size[f->pos_fmt];
         for (int k = 0; k < f->pos_cnt; k++) v->pos[k] = rd_comp(q + k * cs, f->pos_fmt, sc);
         if (f->pos == 1) p += cs * f->pos_cnt;
-    }
+    } else
+        v->pos[0] = v->pos[1] = 0;
     if (f->nrm) {
         const u8 *q = attr(&p, f->nrm, 1);
         int cs = comp_size[f->nrm_fmt];
@@ -293,26 +299,32 @@ static void decode_vertex(const u8 *p, const VtxFmt *f, GXVertex *v) {
         for (int k = 0; k < 3; k++) v->nrm[k] = rd_comp(q + k * cs, f->nrm_fmt, sc);
         if (f->nrm == 1) p += cs * (f->nrm_nbt ? 9 : 3);
         else if (f->nrm_nbt && f->nrm_idx3) p += (f->nrm == 2 ? 1 : 2) * 2;
-    }
+    } else
+        v->nrm[0] = v->nrm[1] = v->nrm[2] = 0;
     static const int col_size[8] = {2, 3, 4, 2, 3, 4, 0, 0};
     for (int i = 0; i < 2; i++) {
-        if (!f->col[i]) { v->col[i][0] = v->col[i][1] = v->col[i][2] = v->col[i][3] = 1; continue; }
+        u8 *out = i ? v->col1 : v->col0;
+        if (!f->col[i]) { memset(out, 255, 4); continue; }
         const u8 *q = attr(&p, f->col[i], 2 + i);
-        rd_color(q, f->col_fmt[i], v->col[i]);
+        rd_color8(q, f->col_fmt[i], out);
         if (f->col[i] == 1) p += col_size[f->col_fmt[i]];
     }
     for (int i = 0; i < 8; i++) {
-        if (!f->tex[i]) continue;
+        if (!f->tex[i]) { v->tex[i][0] = v->tex[i][1] = 0; continue; }
         const u8 *q = attr(&p, f->tex[i], 4 + i);
-        int cs = comp_size[f->tex_fmt[i]], n = f->tex_cnt[i] ? 2 : 1;
+        int cs = comp_size[f->tex_fmt[i]];
         float sc = 1.0f / (1 << f->tex_shift[i]);
-        for (int k = 0; k < n; k++) v->tex[i][k] = rd_comp(q + k * cs, f->tex_fmt[i], sc);
-        if (f->tex[i] == 1) p += cs * n;
+        v->tex[i][0] = rd_comp(q, f->tex_fmt[i], sc);
+        v->tex[i][1] = f->tex_cnt[i] ? rd_comp(q + cs, f->tex_fmt[i], sc) : 0;
+        if (f->tex[i] == 1) p += cs * (f->tex_cnt[i] ? 2 : 1);
     }
-    v->ntex = 0;
-    for (int i = 0; i < 8; i++) if (f->tex[i]) v->ntex = i + 1;
-    v->has_nrm = f->nrm != 0;
-    v->has_col = (f->col[0] ? 1 : 0) | (f->col[1] ? 2 : 0);
+}
+
+struct FillCtx { const u8 *p; const VtxFmt *f; };
+static void fill_vertices(GLVertex *out, u32 n, void *ctx) {
+    struct FillCtx *fc = ctx;
+    const u8 *q = fc->p;
+    for (u32 k = 0; k < n; k++, q += fc->f->size) decode_vertex(q, fc->f, &out[k]);
 }
 
 /* ---------------------------------------------------------------- registers */
@@ -448,11 +460,8 @@ static u32 run(const u8 *p, u32 len, int depth) {
             vtx_fmt(vat, &f);
             g_gpu.cur_vat = vat;
             if (i + 3 + n * f.size > len) { run_need = i + 3 + n * f.size; break; }
-            static GXVertex verts[65536];
-            const u8 *q = p + i + 3;
-            for (u32 k = 0; k < n; k++, q += f.size)
-                decode_vertex(q, &f, &verts[k]);
-            gfx_draw(prim, verts, n);
+            struct FillCtx fc = {p + i + 3, &f};
+            gfx_draw(prim, n, fill_vertices, &fc);
             g_gpu.prims++;
             i += 3 + n * f.size; continue;
         }

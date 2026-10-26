@@ -46,11 +46,7 @@ static int ctx_init(void) {
 
 /* ---------------------------------------------------------------- vertices */
 
-typedef struct {
-    float pos[3], nrm[3], tex[8][2];
-    u8 col0[4], col1[4];   /* GX colours are 8-bit, so normalised bytes are exact */
-    u8 mtx[12];            /* [0] position matrix index, [4..11] texture matrix indices */
-} GLVertex;   /* attribute locations: 0 pos, 1 nrm, 2-3 colours, 4-7 texcoord pairs, 8 pnmtx, 9-10 texmtx */
+/* GLVertex (gpu.h): attribute locations 0 pos, 1 nrm, 2-3 colours, 4-7 texcoord pairs, 8 pnmtx, 9-10 texmtx */
 
 
 /* ---------------------------------------------------------------- shader generation */
@@ -362,6 +358,7 @@ static u64 tlut_gen;            /* bumped whenever palette contents change, so c
 
 typedef struct { u32 addr, fmt, w, h, tlut, hash; GLuint tex; int efb; u32 mode0; int next; } TexEntry;
 static TexEntry texcache[4096];
+static u64 stat_tex_new, stat_tex_bytes, stat_verts;   /* RT_FPS counters */
 static int ntex;
 /* index by guest address (chains of texcache indices + 1): lookups stay O(1) however full the cache is */
 #define TEXH 8192
@@ -522,6 +519,8 @@ static void bind_texture(int map) {
             if (ENV("RT_SHADERS"))
                 fprintf(stderr, "texture %08X fmt %d %dx%d tlut %05X/%d\n", addr, fmt, w, h, tlut_off, tlut_fmt);
             u8 *rgba = calloc(4, (size_t)w * h);
+            stat_tex_new++;
+            stat_tex_bytes += (u64)w * h * 4;
             decode_tex(MEM + addr, fmt, w, h, tlut_off, tlut_fmt, rgba);
             const char *td = ENV("RT_TEXDUMP");
             if (td) {
@@ -721,11 +720,12 @@ static void batch_flush(void) {
 }
 void gfx_batch_flush(void) { batch_flush(); have_sig = 0; }
 
-void gfx_draw(int prim, const GXVertex *v, u32 n) {
+void gfx_draw(int prim, u32 n, VertexFill fill, void *ctx) {
     if (!ready || !n)
         return;
     draws++;
     verts_total += n;
+    stat_verts += n;
     if (n > MAXB / 2) n = MAXB / 2;
     PipeKey k;
     memset(&k, 0, sizeof k);
@@ -779,18 +779,8 @@ void gfx_draw(int prim, const GXVertex *v, u32 n) {
     }
     /* append vertices */
     u32 base = nbv;
-    for (u32 i = 0; i < n; i++) {
-        GLVertex *o = &bverts[nbv++];
-        memcpy(o->pos, v[i].pos, 12);
-        memcpy(o->nrm, v[i].nrm, 12);
-        memcpy(o->tex, v[i].tex, sizeof o->tex);
-        for (int k = 0; k < 4; k++) {
-            o->col0[k] = (u8)(v[i].col[0][k] * 255.0f + 0.5f);
-            o->col1[k] = (u8)(v[i].col[1][k] * 255.0f + 0.5f);
-        }
-        o->mtx[0] = (u8)v[i].pnmtx;
-        for (int t = 0; t < 8; t++) o->mtx[4 + t] = (u8)v[i].texmtx[t];
-    }
+    fill(&bverts[base], n, ctx);
+    nbv += n;
     switch (prim) {
     case 0: case 1:   /* quads */
         for (u32 q = 0; q + 3 < n; q += 4) {
@@ -841,7 +831,7 @@ void gfx_draw(int prim, const GXVertex *v, u32 n) {
         u32 lo = g_gpu.cp[0x50];
         int vat = g_gpu.cur_vat;
         fprintf(stderr, " | vat %d col0 mode %u fmt %u v0col %.2f %.2f %.2f %.2f nrm %u pos %u", vat, (lo >> 13) & 3,
-                (g_gpu.cp[0x70 + vat] >> 14) & 7, v[0].col[0][0], v[0].col[0][1], v[0].col[0][2], v[0].col[0][3], (lo >> 11) & 3, (lo >> 9) & 3);
+                (g_gpu.cp[0x70 + vat] >> 14) & 7, bverts[base].col0[0] / 255.f, bverts[base].col0[1] / 255.f, bverts[base].col0[2] / 255.f, bverts[base].col0[3] / 255.f, (lo >> 11) & 3, (lo >> 9) & 3);
         fprintf(stderr, "\n");
     }
     static int pick_x = -1, pick_y;
@@ -996,6 +986,8 @@ void gfx_present(int sx, int sy, int sw, int sh) {
         if (f0) fprintf(stderr, "fps %.1f (frame %llu, %llu draws, gpu thread %.0f%% busy)\n", (g_gpu.frames - f0) / secs,
                         (unsigned long long)g_gpu.frames, (unsigned long long)g_gpu.last_frame_draws, (gpu_busy_ns - busy0) / 1e7 / secs);
         busy0 = gpu_busy_ns;
+        if (f0) fprintf(stderr, "    new textures %llu (%.1f MB decoded), %llu vertices\n", (unsigned long long)stat_tex_new, stat_tex_bytes / 1e6, (unsigned long long)stat_verts);
+        stat_tex_new = stat_tex_bytes = stat_verts = 0;
         t0 = t;
         f0 = g_gpu.frames;
     }
