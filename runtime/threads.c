@@ -180,6 +180,7 @@ void ai_block_done(void);
 void FN_GXTokenInterruptHandler(CPU *c);
 
 static int poll_irqs(CPU *c) {
+    if (g_quit_req) rt_quit(0);
     gpu_publish();   /* staged GPU commands go out at least this often (the game may be waiting on them) */
     if (in_irq)
         return 0;

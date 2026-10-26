@@ -34,12 +34,9 @@ static void on_prof(int sig, siginfo_t *si, void *ctx) {
 }
 
 void hostprof_dump(void);
-static void on_term(int sig) { (void)sig; exit(0); }   /* so atexit writes the samples */
 
 void hostprof_start(void) {
     if (!ENV("RT_HOSTPROF")) return;
-    atexit(hostprof_dump);
-    signal(SIGTERM, on_term);
     samples = calloc(MAXS, sizeof *samples);
     callers = calloc(MAXS, sizeof *callers);
     struct sigaction sa = {0};

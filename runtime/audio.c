@@ -6,6 +6,7 @@
  * game's sound engine depends on (playback positions, loops, end of sound). The final mix goes to
  * the host (SDL) and optionally a WAV file (RT_WAV=path). */
 #include <dlfcn.h>
+#include <pthread.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -205,8 +206,8 @@ void audio_finish(void) {
     wav = NULL;
 }
 
-static void on_term(int sig) { (void)sig; exit(0); }
 
+static void sdl_audio_init(void);
 static void audio_open(void) {
     static int tried;
     if (tried) return;
@@ -215,11 +216,14 @@ static void audio_open(void) {
     if (w && (wav = fopen(w, "wb"))) {
         u8 hdr[44] = {0};
         fwrite(hdr, 1, 44, wav);
-        atexit(audio_finish);
-        signal(SIGTERM, on_term);
-        signal(SIGINT, on_term);
     }
     if (ENV("RT_HEADLESS") || (!ENV("DISPLAY") && !ENV("WAYLAND_DISPLAY"))) return;
+    extern pthread_mutex_t g_sdl_lock;
+    pthread_mutex_lock(&g_sdl_lock);
+    sdl_audio_init();
+    pthread_mutex_unlock(&g_sdl_lock);
+}
+static void sdl_audio_init(void) {
     sdl = dlopen("libSDL2-2.0.so.0", RTLD_NOW);
     if (!sdl) return;
     int (*init)(u32) = (int (*)(u32))dlsym(sdl, "SDL_InitSubSystem");

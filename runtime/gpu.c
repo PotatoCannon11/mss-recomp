@@ -77,6 +77,8 @@ void gpu_publish(void) {
 
 static void *gpu_main(void *arg) {
     (void)arg;
+    void hostprof_start(void);
+    if (ENV("RT_HOSTPROF_GPU")) hostprof_start();   /* profile this thread instead of the game's */
     gfx_init();
     struct timespec last_poll = {0};
     for (;;) {

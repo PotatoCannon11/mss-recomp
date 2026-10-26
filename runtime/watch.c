@@ -46,7 +46,8 @@ static void on_trap(int sig, siginfo_t *si, void *ctx) {
 }
 
 extern char __executable_start;
-static void watch_dump(void) {
+void watch_dump(void) {
+    if (!w_len) return;
     FILE *f = fopen(ENV("RT_WATCH_OUT") ? ENV("RT_WATCH_OUT") : "watch.txt", "w");
     if (!f) return;
     fprintf(f, "base %lx\n", (unsigned long)&__executable_start);
@@ -71,7 +72,6 @@ void watch_tick(u64 ticks) {
         sigaction(SIGSEGV, &sa, NULL);
         sa.sa_sigaction = on_trap;
         sigaction(SIGTRAP, &sa, NULL);
-        atexit(watch_dump);
     }
     if (!w_len || w_armed || ticks < from) return;
     w_page = (u8 *)(((unsigned long)(MEM + w_addr)) & ~4095UL);

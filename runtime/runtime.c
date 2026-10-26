@@ -447,6 +447,38 @@ void rt_backtrace(void) {
 
 CPU g_cpu;
 
+/* shutdown: write out whatever is being recorded, then leave at once. Threads (GPU, timer) are still
+ * running, so libc's exit handlers / static destructors are skipped (they crashed when run from a
+ * signal handler with the other threads live). Termination signals only request this; the game
+ * thread acts on it at its next interrupt poll. */
+volatile sig_atomic_t g_quit_req;
+void audio_finish(void);
+void hostprof_dump(void);
+void watch_dump(void);
+void rt_quit(int code) {
+    static volatile int once;
+    if (once++) _exit(code);
+    audio_finish();
+    hostprof_dump();
+    watch_dump();
+    fflush(NULL);
+    _exit(code);
+}
+static void on_quit_signal(int sig) {
+    (void)sig;
+    static struct timespec first;
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    if (g_quit_req) {   /* repeated: `timeout` signals the process and its group at once, so only a
+                         * signal well after the first means the game thread isn't getting there */
+        if (now.tv_sec - first.tv_sec >= 2) _exit(1);
+        return;
+    }
+    first = now;
+    g_quit_req = 1;
+    g_irq_pending = 1;
+}
+
 static void on_segv(int sig, siginfo_t *si, void *uc) {
     u8 *a = (u8 *)si->si_addr;
     if (a >= MEM && a < MEM + (1ull << 32))
@@ -476,6 +508,8 @@ int main(int argc, char **argv) {
     sa.sa_flags = SA_SIGINFO;
     sigaction(SIGSEGV, &sa, NULL);
     sigaction(SIGBUS, &sa, NULL);
+    signal(SIGTERM, on_quit_signal);
+    signal(SIGINT, on_quit_signal);
     mem_init();
     load_dol(argv[1]);
     lowmem_init("RMBE01");
@@ -488,7 +522,7 @@ int main(int argc, char **argv) {
     c->lr = 0;
     rt_timer_start();
     void hostprof_start(void);
-    hostprof_start();
+    if (!ENV("RT_HOSTPROF_GPU")) hostprof_start();
     fprintf(stderr, "boot: entry %08X (%s)\n", g_entry, fn_name(g_entry));
     call_indirect(c, g_entry);
     fprintf(stderr, "entry returned\n");

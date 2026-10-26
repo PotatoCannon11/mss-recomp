@@ -168,3 +168,17 @@ Check in over SSH:
   Windowed 3x (1920x1584) and 4x (2560x2112): 59.7-59.8 fps avg, min 58, game thread ~73% idle.
 - Next: user retest of big star/hit effects; frame pacing check; then the remaining GPU-thread costs
   (vertex decode) for 8x / multi-monitor headroom.
+
+## 2026-10-26 late night
+- SOLVED the "rare Challenge-mode crash": it was the shutdown path, not the game. Every crashing run
+  ended by `timeout` (exit 124); the SIGTERM handlers (audio, profiler) called exit() from signal context
+  while the game/GPU threads ran, and libc's exit handlers jumped to NULL. The native backtrace from the
+  new fault report showed signal -> on_term -> exit -> __run_exit_handlers -> fault. Guest regs always
+  showed fn_8025F480 only because that's the idle loop where async signals land.
+  Now: SIGTERM/SIGINT set a quit flag; the game thread sees it at the next interrupt poll and rt_quit()
+  flushes WAV/profile/watch output then _exit()s. Esc / window close use rt_quit too. (`timeout` signals
+  both the process and its group, so a repeat within 2 s is ignored.) Verified: clean status 0, complete
+  WAV + profile files on timeout.
+- SDL init serialized (video now on the GPU thread, audio on the game thread).
+- User at desk: 4x (2560x2112) session holding ~60 fps, GPU thread 48-53% busy on 4,500-draw frames.
+- Next: Challenge mode further (story, team building); baserunning input; GPU-thread vertex decode.

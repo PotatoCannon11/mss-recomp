@@ -12,6 +12,7 @@
 #include <GL/gl.h>
 #include <GL/glext.h>
 #include <dlfcn.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include "runtime.h"
@@ -32,7 +33,17 @@ static const char *(*SDL_GetError_)(void);
 
 #define SYM(n) (*(void **)&n##_ = dlsym(sdl, #n))
 
+/* SDL's global init isn't safe to run concurrently: video (GPU thread) and audio (game thread)
+ * initialise under this lock */
+pthread_mutex_t g_sdl_lock = PTHREAD_MUTEX_INITIALIZER;
+static int window_init_locked(int w, int h);
 int gfx_window_init(int w, int h) {
+    pthread_mutex_lock(&g_sdl_lock);
+    int r = window_init_locked(w, h);
+    pthread_mutex_unlock(&g_sdl_lock);
+    return r;
+}
+static int window_init_locked(int w, int h) {
     if (ENV("RT_HEADLESS") || (!ENV("DISPLAY") && !ENV("WAYLAND_DISPLAY")))
         return 0;
     sdl = dlopen("libSDL2-2.0.so.0", RTLD_NOW);
@@ -58,13 +69,13 @@ void window_poll(void) {
     u8 ev[64];
     while (SDL_PollEvent_(ev)) {
         u32 type = *(u32 *)ev;
-        if (type == 0x100) exit(0);   /* SDL_QUIT */
+        if (type == 0x100) rt_quit(0);   /* SDL_QUIT */
     }
     const u8 *k = SDL_GetKeyboardState_(NULL);
     int mx, my, ww, wh;
     u32 mb = SDL_GetMouseState_(&mx, &my);
     SDL_GetWindowSize_(win, &ww, &wh);
-    if (k[41]) exit(0);   /* Esc */
+    if (k[41]) rt_quit(0);   /* Esc */
     u16 b = 0;
     if (k[80]) b |= 0x0001;   /* left */
     if (k[79]) b |= 0x0002;   /* right */

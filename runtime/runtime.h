@@ -1,5 +1,6 @@
 /* Host runtime interfaces shared by the runtime and HLE modules. */
 #pragma once
+#include <signal.h>
 #include "cpu.h"
 
 #define MEM1_SIZE 0x01800000u
@@ -33,6 +34,8 @@ typedef struct {
     int gesture;            /* 0 swing, 1 / 2 overhand throw (either sign) */
     float rest_y, rest_z;   /* resting gravity (flat: 0,1; pointing up: 1,0) */
 } HostPad;
+void rt_quit(int code);              /* flush recordings, exit immediately */
+extern volatile sig_atomic_t g_quit_req;
 extern int g_widescreen;   /* SYSCONF aspect is 16:9 (default; RT_43=1 for 4:3) */
 void wpad_start_swing(void);
 void wpad_start_gesture(int g);   /* 0 swing, 1 / 2 throw */
