@@ -35,6 +35,7 @@ static void parse_stream(void);
  * and the window, parses and draws, and raises the token/finish interrupt flags. RT_DETERMINISTIC
  * (or RT_GPU_INLINE) keeps everything on the game thread. */
 int gpu_threaded;
+u64 gpu_stat_verts[2][2];   /* [from display list][indexed positions] */
 u64 gpu_busy_ns;   /* GPU thread time spent parsing/drawing (RT_FPS reports it per second) */
 #define RING (32u << 20)
 static u8 ring[RING];
@@ -461,6 +462,7 @@ static u32 run(const u8 *p, u32 len, int depth) {
             g_gpu.cur_vat = vat;
             if (i + 3 + n * f.size > len) { run_need = i + 3 + n * f.size; break; }
             struct FillCtx fc = {p + i + 3, &f};
+            gpu_stat_verts[depth > 0][f.pos >= 2] += n;
             gfx_draw(prim, n, fill_vertices, &fc);
             g_gpu.prims++;
             i += 3 + n * f.size; continue;

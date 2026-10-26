@@ -358,7 +358,7 @@ static u64 tlut_gen;            /* bumped whenever palette contents change, so c
 
 typedef struct { u32 addr, fmt, w, h, tlut, hash; GLuint tex; int efb; u32 mode0; int next; } TexEntry;
 static TexEntry texcache[4096];
-static u64 stat_tex_new, stat_tex_bytes, stat_verts;   /* RT_FPS counters */
+static u64 stat_tex_new, stat_tex_bytes, stat_verts, stat_brk[8];   /* RT_FPS counters */
 static int ntex;
 /* index by guest address (chains of texcache indices + 1): lookups stay O(1) however full the cache is */
 #define TEXH 8192
@@ -676,9 +676,19 @@ static void apply_state(void) {
 
 /* Batching: consecutive draws with the same program, textures, uniforms and render state are
  * appended to one indexed triangle list and drawn with a single GL call. */
-#define MAXB (1 << 18)
-static GLVertex bverts[MAXB];
-static u32 bidx[MAXB * 3];
+/* vertices and indices are written straight into persistently mapped GPU buffers (rings) by the
+ * vertex decoder: no copies, no reallocation. A batch is [vstart, vstart + nbv) / [istart, ...), drawn
+ * with a base vertex. Each ring is split into quarters; a batch never spans one: on crossing into the
+ * next quarter we flush, fence the quarter left and wait for that quarter's fence from the last lap. */
+#define MAXB (1 << 18)                 /* vertices per batch (and per ring quarter) */
+#define VQ MAXB
+#define IQ (MAXB * 3)
+static GLVertex *vring;
+static u32 *iring;
+static u32 vstart, istart;             /* current batch start in the rings (elements) */
+static GLsync vfence[4], ifence[4];
+#define bverts (vring + vstart)
+#define bidx (iring + istart)
 static u32 nbv, nbi;
 static GLuint batch_prog;
 typedef struct { GLuint prog; u32 tex[8][4]; u32 st[5]; } BatchSig;
@@ -708,15 +718,38 @@ static void upload_uniforms(const Uniforms *u) {
 }
 
 static void batch_flush(void) {
-    if (!nbi) { nbv = 0; return; }
-    glUseProgram(batch_prog);
-    glBindVertexArray(vao);
-    glBindBuffer(GL_ARRAY_BUFFER, vbo);
-    glBufferData(GL_ARRAY_BUFFER, nbv * sizeof(GLVertex), bverts, GL_STREAM_DRAW);
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ibo);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, nbi * 4, bidx, GL_STREAM_DRAW);
-    glDrawElements(GL_TRIANGLES, nbi, GL_UNSIGNED_INT, 0);
+    if (nbi) {
+        glUseProgram(batch_prog);
+        glBindVertexArray(vao);
+        glDrawElementsBaseVertex(GL_TRIANGLES, nbi, GL_UNSIGNED_INT, (void *)((size_t)istart * 4), (GLint)vstart);
+    }
+    vstart += nbv;
+    istart += nbi;
     nbv = nbi = 0;
+}
+
+/* move a ring cursor into its next quarter: fence the quarter left, wait for the next one's last use */
+static void ring_advance(u32 *start, u32 *cur, u32 qsize, GLsync *fences) {
+    u32 nq = (*cur + 1) & 3;
+    if (fences[*cur]) glDeleteSync(fences[*cur]);
+    fences[*cur] = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+    if (fences[nq]) {
+        glClientWaitSync(fences[nq], GL_SYNC_FLUSH_COMMANDS_BIT, 1000000000ull);
+        glDeleteSync(fences[nq]);
+        fences[nq] = 0;
+    }
+    *cur = nq;
+    *start = nq * qsize;
+}
+static u32 vq_cur, iq_cur;   /* quarter each ring is currently writing in */
+/* make room for nv vertices / ni indices after the current batch, within the current quarters
+ * (flushing and moving to the next quarter when they don't fit) */
+static void ring_room(u32 nv, u32 ni) {
+    int vfit = vstart + nbv + nv <= (vq_cur + 1) * VQ, ifit = istart + nbi + ni <= (iq_cur + 1) * IQ;
+    if (vfit && ifit) return;
+    batch_flush();
+    if (!vfit) ring_advance(&vstart, &vq_cur, VQ, vfence);
+    if (!ifit) ring_advance(&istart, &iq_cur, IQ, ifence);
 }
 void gfx_batch_flush(void) { batch_flush(); have_sig = 0; }
 
@@ -757,7 +790,10 @@ void gfx_draw(int prim, u32 n, VertexFill fill, void *ctx) {
     sig.st[0] = g_gpu.bp[0x00] & (3 << 14); sig.st[1] = g_gpu.bp[0x40]; sig.st[2] = g_gpu.bp[0x41];
     sig.st[3] = g_gpu.bp[0x20]; sig.st[4] = g_gpu.bp[0x21];
     int tri = prim <= 4;
-    if (!tri || g_gpu.udirty || !have_sig || memcmp(&sig, &cur_sig, sizeof sig) || nbv + n > MAXB || nbi + n * 3 > MAXB * 3) {
+    int brk = !tri ? 1 : g_gpu.udirty ? 2 : !have_sig ? 3 : memcmp(&sig, &cur_sig, sizeof sig) ? (sig.prog != cur_sig.prog ? 4 : memcmp(sig.tex, cur_sig.tex, sizeof sig.tex) ? 5 : 6)
+            : (nbv + n > MAXB || nbi + n * 3 > MAXB * 3) ? 7 : 0;
+    stat_brk[brk]++;
+    if (brk) {
         batch_flush();
         cur_sig = sig;
         have_sig = 1;
@@ -778,6 +814,7 @@ void gfx_draw(int prim, u32 n, VertexFill fill, void *ctx) {
         apply_state();
     }
     /* append vertices */
+    ring_room(n, n * 3);
     u32 base = nbv;
     fill(&bverts[base], n, ctx);
     nbv += n;
@@ -804,10 +841,9 @@ void gfx_draw(int prim, u32 n, VertexFill fill, void *ctx) {
     default: {   /* lines / points: drawn on their own */
         static const GLenum mode[8] = {0, 0, 0, 0, 0, GL_LINES, GL_LINE_STRIP, GL_POINTS};
         glBindVertexArray(vao);
-        glBindBuffer(GL_ARRAY_BUFFER, vbo);
-        glBufferData(GL_ARRAY_BUFFER, n * sizeof(GLVertex), bverts + base, GL_STREAM_DRAW);
-        glDrawArrays(mode[prim], 0, n);
-        nbv = base;
+        glDrawArrays(mode[prim], (GLint)(vstart + base), n);
+        vstart += nbv;   /* the batch was empty (lines/points always flush first): consume these */
+        nbv = 0;
         have_sig = 0;
         break;
     }
@@ -987,7 +1023,15 @@ void gfx_present(int sx, int sy, int sw, int sh) {
                         (unsigned long long)g_gpu.frames, (unsigned long long)g_gpu.last_frame_draws, (gpu_busy_ns - busy0) / 1e7 / secs);
         busy0 = gpu_busy_ns;
         if (f0) fprintf(stderr, "    new textures %llu (%.1f MB decoded), %llu vertices\n", (unsigned long long)stat_tex_new, stat_tex_bytes / 1e6, (unsigned long long)stat_verts);
+        if (f0) fprintf(stderr, "    batch breaks: lines/points %llu, uniforms %llu, first %llu, program %llu, textures %llu, state %llu, full %llu (merged %llu)\n",
+                        (unsigned long long)stat_brk[1], (unsigned long long)stat_brk[2], (unsigned long long)stat_brk[3], (unsigned long long)stat_brk[4],
+                        (unsigned long long)stat_brk[5], (unsigned long long)stat_brk[6], (unsigned long long)stat_brk[7], (unsigned long long)stat_brk[0]);
         stat_tex_new = stat_tex_bytes = stat_verts = 0;
+        memset(stat_brk, 0, sizeof stat_brk);
+        extern u64 gpu_stat_verts[2][2];
+        if (f0) fprintf(stderr, "    vertices: fifo direct %llu, fifo indexed %llu, display list direct %llu, display list indexed %llu\n",
+                        (unsigned long long)gpu_stat_verts[0][0], (unsigned long long)gpu_stat_verts[0][1], (unsigned long long)gpu_stat_verts[1][0], (unsigned long long)gpu_stat_verts[1][1]);
+        memset(gpu_stat_verts, 0, sizeof gpu_stat_verts);
         t0 = t;
         f0 = g_gpu.frames;
     }
@@ -1114,6 +1158,15 @@ void gfx_init(void) {
     glGenBuffers(1, &vbo);
     glGenBuffers(1, &ibo);
     glGenBuffers(1, &ubo);
+    /* persistently mapped vertex/index rings (the VAO keeps the index buffer binding) */
+    const GLbitfield sflags = GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT;
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    glBufferStorage(GL_ARRAY_BUFFER, (GLsizeiptr)4 * VQ * sizeof(GLVertex), NULL, sflags);
+    vring = glMapBufferRange(GL_ARRAY_BUFFER, 0, (GLsizeiptr)4 * VQ * sizeof(GLVertex), sflags);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ibo);
+    glBufferStorage(GL_ELEMENT_ARRAY_BUFFER, (GLsizeiptr)4 * IQ * 4, NULL, sflags);
+    iring = glMapBufferRange(GL_ELEMENT_ARRAY_BUFFER, 0, (GLsizeiptr)4 * IQ * 4, sflags);
+    if (!vring || !iring) { fprintf(stderr, "gfx: persistent buffer mapping failed (needs GL 4.4 / ARB_buffer_storage)\n"); exit(1); }
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
     GLsizei st = sizeof(GLVertex);
     glEnableVertexAttribArray(0); glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, st, (void *)offsetof(GLVertex, pos));
