@@ -60,25 +60,33 @@ HLE(SIInit) { (void)c; }                   /* GameCube controller serial bus */
 
 
 /* completed drive commands are reported from the interrupt path, after the request has returned */
-typedef struct { u32 block, cb, result; } DvdDone;
+/* The drive takes time: games overlap loading with other work and some depend on that ordering, so
+ * completions arrive after a realistic delay (seek + ~4 MB/s), one command at a time like the drive. */
+typedef struct { u32 block, cb, result; u64 due; } DvdDone;
 static DvdDone dvd_q[64];
 static int dvd_n;
+static u64 dvd_busy_until;
+static u64 tb_now(void) { u32 lo = ppc_mftb(NULL, 0); return ((u64)ppc_mftb(NULL, 1) << 32) | lo; }
 static void dvd_defer(u32 block, u32 cb, u32 result) {
-    if (dvd_n < 64) dvd_q[dvd_n++] = (DvdDone){block, cb, result};
+    u64 now = tb_now(), start = dvd_busy_until > now ? dvd_busy_until : now;
+    double secs = getenv("RT_DVD_FAST") ? 0 : 0.02 + result / (4.0 * 1024 * 1024);
+    u64 due = start + (u64)(secs * TB_CLOCK);
+    dvd_busy_until = due;
+    if (dvd_n < 64) dvd_q[dvd_n++] = (DvdDone){block, cb, result, due};
 }
-int dvd_pending(void) { return dvd_n; }
+int dvd_pending(void) { return dvd_n && tb_now() >= dvd_q[0].due; }
 int dvd_deliver(CPU *c) {
-    if (!dvd_n) return 0;
-    DvdDone q[64];
-    int n = dvd_n;
-    memcpy(q, dvd_q, sizeof(DvdDone) * n);
-    dvd_n = 0;
-    for (int i = 0; i < n; i++) {
-        mw32(q[i].block + 0x0C, 0);   /* idle (DVD_STATE_END) */
-        guest_call(c, q[i].cb, q[i].result, q[i].block);
+    int any = 0;
+    while (dvd_n && tb_now() >= dvd_q[0].due) {
+        DvdDone d = dvd_q[0];
+        memmove(dvd_q, dvd_q + 1, sizeof(DvdDone) * --dvd_n);
+        mw32(d.block + 0x0C, 0);   /* idle (DVD_STATE_END) */
+        guest_call(c, d.cb, d.result, d.block);
+        any = 1;
     }
-    return 1;
+    return any;
 }
+u64 dvd_next_due(void) { return dvd_n ? dvd_q[0].due : ~0ull; }
 
 /* ---- DVD: the SDK's file layer (DVDOpen, FST lookup) runs as recompiled code; the drive is ours */
 void FN___DVDFSInit(CPU *c);

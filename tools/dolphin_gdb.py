@@ -74,9 +74,69 @@ def main():
                     break
                 print(f"    lr {g.u32(back + 4):08X}")
                 sp = back
-    elif sys.argv[2] == "peek":
-        a, n = int(sys.argv[3], 16), int(sys.argv[4], 16)
-        print(g.mem(a, n).hex())
+    elif sys.argv[2] == "sample":   # sample <seconds> <outfile>: periodic halts, record pc/lr chains
+        dur, out = float(sys.argv[3]), open(sys.argv[4], "w")
+
+        def drain():
+            g.s.setblocking(False)
+            try:
+                while g.s.recv(65536):
+                    pass
+            except BlockingIOError:
+                pass
+            g.s.setblocking(True)
+            g.buf = b""
+
+        g.s.sendall(b"$c#63")
+        if len(sys.argv) > 5:
+            time.sleep(float(sys.argv[5]))   # let the game run untouched first
+        t0 = time.time()
+        while time.time() - t0 < dur:
+            time.sleep(0.03)
+            g.s.sendall(b"\x03")
+            stop = ""
+            while not stop.startswith("T"):
+                stop = g.reply()
+            f = dict(kv.split(":") for kv in stop[3:].split(";") if ":" in kv)
+            pc, sp = int(f.get("40", "0"), 16), int(f.get("01", "0"), 16)
+            time.sleep(0.01)
+            drain()
+            lr = g.send("p43")
+            chain = [pc] + ([int(lr, 16)] if len(lr) == 8 else [])
+            for _ in range(16):
+                back = g.u32(sp)
+                if not (0x80000000 <= back < 0x94000000):
+                    break
+                chain.append(g.u32(back + 4))
+                sp = back
+            out.write("%.2f %s\n" % (time.time() - t0, " ".join("%08X" % x for x in chain)))
+            out.flush()
+            drain()
+            g.s.sendall(b"$c#63")
+    elif sys.argv[2] == "peek":   # peek <after seconds> <addr:len>[,...]  ('*addr' = dereference first)
+        g.s.sendall(b"$c#63")
+        time.sleep(float(sys.argv[3]))
+        g.s.sendall(b"\x03")
+        stop = ""
+        while not stop.startswith("T"):
+            stop = g.reply()
+        time.sleep(0.05)
+        g.s.setblocking(False)
+        try:
+            while g.s.recv(65536):
+                pass
+        except BlockingIOError:
+            pass
+        g.s.setblocking(True)
+        g.buf = b""
+        for spec in sys.argv[4].split(","):
+            a, n = spec.split(":")
+            if a.startswith("*"):
+                a = "%x" % g.u32(int(a[1:], 16))
+            a, n = int(a, 16), int(n, 16)
+            data = g.mem(a, n)
+            for i in range(0, n, 16):
+                print("%08X: %s" % (a + i, " ".join(data[i + k:i + k + 4].hex().upper() for k in range(0, min(16, n - i), 4))))
 
 
 if __name__ == "__main__":

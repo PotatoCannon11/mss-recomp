@@ -14,6 +14,7 @@
 
 #define HLE(name) void FN_##name(CPU *c)
 #define N 96   /* samples per AX frame */
+#define AX_OUT_DSP_READY 0x80796A80u   /* __AXOutDspReady (r13 + 2240) */
 
 enum { BUS_L, BUS_R, BUS_S, BUS_AL, BUS_AR, BUS_AS, BUS_BL, BUS_BR, BUS_BS, BUS_CL, BUS_CR, BUS_CS, NBUS };
 static s32 bus[NBUS][N];
@@ -60,8 +61,11 @@ static s16 next_sample(Src *s) {
     default: out = 0;
     }
     if (s->cur == s->end) {
+        /* the DSP always continues at the loop address; without looping it also stops the voice.
+         * nw4r points the loop of one-shot sounds at a silent buffer and detects the end by the
+         * playback address lying inside it. */
+        s->cur = s->loop;
         if (s->loopflag) {
-            s->cur = s->loop;
             if (s->format == 0) {
                 if (!s->stream) { s->yn1 = s->loop_yn1; s->yn2 = s->loop_yn2; }
                 s->ps = s->loop_ps;
@@ -231,21 +235,38 @@ static void audio_open(void) {
     if (audio_dev) pause(audio_dev, 0);
 }
 
+/* the mix goes to AX's output buffer in guest memory; the AI DMA (below) plays it */
 static void output(u16 master, u32 lr_addr) {
-    s16 pcm[N * 2];
-    for (int i = 0; i < N; i++) {
+    for (int i = 0; i < N && lr_addr; i++) {
         s32 l = (s32)(((s64)bus[BUS_L][i] * master) >> 15), r = (s32)(((s64)bus[BUS_R][i] * master) >> 15);
-        pcm[2 * i] = clamp16(l);
-        pcm[2 * i + 1] = clamp16(r);
-        if (lr_addr) {   /* the AI buffer in guest memory */
-            w16(lr_addr + 4 * i, (u16)pcm[2 * i]);
-            w16(lr_addr + 4 * i + 2, (u16)pcm[2 * i + 1]);
-        }
+        w16(lr_addr + 4 * i, (u16)clamp16(l));
+        w16(lr_addr + 4 * i + 2, (u16)clamp16(r));
     }
+}
+
+/* ---------------------------------------------------------------- AI DMA */
+
+extern u32 g_ai_dma_addr, g_ai_dma_len;
+static u32 play_addr, play_len;
+
+u64 ai_block_ticks(void) {
+    u32 len = play_len ? play_len : (g_ai_dma_len ? g_ai_dma_len : N * 4);
+    return (u64)TB_CLOCK * (len / 4) / 32000;   /* 16-bit stereo at 32 kHz */
+}
+
+/* one DMA block has played: send it to the host, then the next block (set by AIInitDMA) starts */
+void ai_block_done(void) {
     audio_open();
-    if (wav) { fwrite(pcm, 1, sizeof pcm, wav); wav_bytes += sizeof pcm; }
-    if (audio_dev && SDL_GetQueuedAudioSize_(audio_dev) < 32000 * 4 / 5)   /* keep latency under 200 ms */
-        SDL_QueueAudio_(audio_dev, pcm, sizeof pcm);
+    if (play_addr && play_len && play_len <= 0x10000) {
+        static s16 pcm[0x8000];
+        u32 n = play_len / 2;
+        for (u32 i = 0; i < n; i++) pcm[i] = (s16)r16(play_addr + 2 * i);
+        if (wav) { fwrite(pcm, 2, n, wav); wav_bytes += n * 2; }
+        if (audio_dev && SDL_GetQueuedAudioSize_(audio_dev) < 32000 * 4 / 5)   /* keep latency under 200 ms */
+            SDL_QueueAudio_(audio_dev, pcm, n * 2);
+    }
+    play_addr = g_ai_dma_addr;
+    play_len = g_ai_dma_len;
 }
 
 /* ---------------------------------------------------------------- command list */
@@ -298,7 +319,11 @@ static int expect_list;
 HLE(DSPSendMailToDSP) {
     u32 m = c->r[3];
     if ((m >> 16) == 0xBABE) expect_list = 1;
-    else if (expect_list) { expect_list = 0; run_list(m); }
+    else if (expect_list) {
+        expect_list = 0;
+        run_list(m);
+        mw32(AX_OUT_DSP_READY, 1);   /* the DSP is done with the frame (__AXDSPResumeCallback) */
+    }
 }
 
 void audio_frame_done(void) {}

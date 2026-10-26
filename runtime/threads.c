@@ -46,7 +46,10 @@ static Co *find(u32 ctx) {
 static void co_entry(void) {
     CPU *c = &g_cpu;
     u32 x = cur->ctx;
+    static u32 spr[1024];
+    memcpy(spr, c->spr, sizeof spr);   /* special registers are the processor's, not the thread's */
     memset(c, 0, sizeof *c);
+    memcpy(c->spr, spr, sizeof spr);
     for (int i = 0; i < 32; i++) {
         c->r[i] = mr32(x + 4 * i);
         c->f[i] = lfd(x + 0x90 + 8 * i);
@@ -60,6 +63,8 @@ static void co_entry(void) {
         c->gqr[i] = mr32(x + 0x1A4 + 4 * i);
     c->msr = 0x0000B032;   /* EE on, as after rfi into a new thread */
     u32 entry = mr32(x + 0x198), ret = c->lr;
+    if (getenv("RT_THREADLOG"))
+        fprintf(stderr, "thread %08X starts at %08X (%s) r3=%08X\n", x, entry, fn_name(entry), c->r[3]);
     call_indirect(c, entry);
     call_indirect(c, ret);   /* returning from the thread function enters OSExitThread */
     fprintf(stderr, "thread %08X: OSExitThread returned\n", x);
@@ -77,7 +82,10 @@ static void switch_to(Co *n) {
         perror("swapcontext");
         abort();
     }
+    static u32 spr[1024];
+    memcpy(spr, g_cpu.spr, sizeof spr);   /* SPRs (HID2, DMA, ...) belong to the processor */
     g_cpu = o->cpu;   /* resumed */
+    memcpy(g_cpu.spr, spr, sizeof spr);
 }
 
 static Co *new_co(u32 ctx) {
@@ -103,6 +111,15 @@ static Co *new_co(u32 ctx) {
 extern u64 g_virtual_tb;
 extern int g_deterministic;
 static int in_irq;
+
+/* return from an interrupt: the interrupted register file comes back, but special registers are
+ * processor state that handlers (or threads run meanwhile) may have changed */
+static void restore_regs(CPU *c, const CPU *saved) {
+    static u32 spr[1024];
+    memcpy(spr, c->spr, sizeof spr);
+    *c = *saved;
+    memcpy(c->spr, spr, sizeof spr);
+}
 #define IRQ_CONTEXT 0x93F00000u   /* guest scratch OSContext for interrupt handling (IOS-reserved MEM2) */
 static u32 irq_ctx;
 
@@ -154,10 +171,11 @@ void FN_DecrementerExceptionHandler(CPU *c);
 void FN___VIRetraceHandler(CPU *c);
 void FN___OSReschedule(CPU *c);
 void FN_GXFinishInterruptHandler(CPU *c);
-void FN___AXOutNewFrame(CPU *c);
+void FN___AIDHandler(CPU *c);
 extern int g_ax_started;
 static u64 ax_next;
-#define AX_PERIOD ((u64)TB_CLOCK * 96 / 32000)   /* one AX frame: 96 samples at 32 kHz */
+u64 ai_block_ticks(void);
+void ai_block_done(void);
 void FN_GXTokenInterruptHandler(CPU *c);
 
 static int poll_irqs(CPU *c) {
@@ -200,13 +218,16 @@ static int poll_irqs(CPU *c) {
         FN_GXFinishInterruptHandler(c);
         any = 1;
     }
-    if (g_ax_started && now >= ax_next) {   /* AI DMA done: the DSP is ready for the next audio frame */
-        if (!ax_next || now - ax_next > 8 * AX_PERIOD)
+    if (g_ax_started && now >= ax_next) {   /* AI DMA block finished: the DSP-AI interrupt */
+        u64 period = ai_block_ticks();
+        if (!ax_next || now - ax_next > 8 * period)
             ax_next = now;
-        ax_next += AX_PERIOD;
+        ax_next += period;
+        ai_block_done();   /* plays the block that just finished and latches the next */
+        mw16(0xCC00500Au, mr16(0xCC00500Au) | 0x8);   /* AIDINT */
         mw32(0x800000D4u, IRQ_CONTEXT);
-        FN___AXOutNewFrame(c);
-        audio_frame_done();
+        c->r[3] = 5; c->r[4] = irq_ctx;   /* __OS_INTERRUPT_DSP_AI */
+        FN___AIDHandler(c);
         any = 1;
     }
     mw32(0x800000D4u, IRQ_CONTEXT);
@@ -231,12 +252,15 @@ static int poll_irqs(CPU *c) {
     mw32(0x800000D4u, irq_ctx);
     if (irq_ctx) mw16(irq_ctx + 0x1A2, mr16(irq_ctx + 0x1A2) & ~2u);   /* as the exception return would */
     in_irq = 0;
-    *c = save;
+    restore_regs(c, &save);
     return any;
 }
 
+u64 dvd_next_due(void);
 static void wait_next_event(void) {
     u64 now = now_tb(), next = vi_next;
+    if (dvd_next_due() < next)
+        next = dvd_next_due();
     if (g_ax_started && ax_next < next)
         next = ax_next;
     if (dec_armed && dec_deadline < next)
@@ -311,7 +335,9 @@ static void peek(void) {
 }
 
 void ax_dump(void);
+void coverage_dump(void);
 static void dump_threads(void) {
+    coverage_dump();
     peek();
     ax_dump();
     static const char *st[] = {"?", "READY", "RUNNING", "?", "WAITING", "?", "?", "?", "MORIBUND"};
@@ -383,5 +409,5 @@ void rt_async_irq(CPU *c) {
     CPU save = *c;
     if (poll_irqs(c))
         FN___OSReschedule(c);
-    *c = save;
+    restore_regs(c, &save);
 }

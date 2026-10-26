@@ -197,12 +197,27 @@ u32 ppc_mftb(CPU *c, int upper) {
     return upper ? (u32)(tb >> 32) : (u32)tb;
 }
 
+/* locked-cache DMA (DMAU 922 / DMAL 923): copies run immediately, so the queue is always empty */
+static void lc_dma(CPU *c) {
+    u32 u = c->spr[922], l = c->spr[923];
+    u32 mem = u & 0xFFFFFFE0u, lc = l & 0xFFFFFFE0u;
+    u32 lines = ((u & 0x1F) << 2) | ((l >> 2) & 3);
+    if (!lines) lines = 128;
+    if (l & 0x10) memmove(MEM + lc, MEM + mem, lines * 32);   /* LD: memory -> locked cache */
+    else memmove(MEM + mem, MEM + lc, lines * 32);           /* store: locked cache -> memory */
+    c->spr[923] = l & ~2u;   /* T (trigger) clears when done */
+}
+
 void ppc_mtspr(CPU *c, int spr, u32 v) {
+    if (spr == 920 && getenv("RT_HID2LOG")) fprintf(stderr, "mtspr HID2 = %08X (lr %08X)\n", v, c->lr);
     c->spr[spr] = v;
     if (spr == 22)
         rt_set_dec(v);
+    else if (spr == 923 && (v & 2))
+        lc_dma(c);
 }
 u32 ppc_mfspr(CPU *c, int spr) {
+    if (spr == 920 && getenv("RT_HID2LOG")) fprintf(stderr, "mfspr HID2 = %08X (lr %08X)\n", c->spr[920], c->lr);
     if (spr == 22)
         return rt_get_dec();
     if (spr == 287)
@@ -327,8 +342,19 @@ static void print_arg(u32 v) {
     else
         fprintf(stderr, " %08X", v);
 }
+static u8 *coverage;
+void coverage_dump(void) {
+    if (!coverage) return;
+    FILE *f = fopen(getenv("RT_COVERAGE"), "w");
+    for (u32 i = 0; f && i < (1u << 22); i++)
+        if (coverage[i]) fprintf(f, "%08X\n", 0x80000000u + (i << 2));
+    if (f) fclose(f);
+}
 void trace_enter(u32 addr, u32 lr) {
     ring[ring_pos++ % RING] = addr;
+    static int cov = -1;
+    if (cov < 0) { cov = getenv("RT_COVERAGE") != NULL; if (cov) coverage = calloc(1 << 22, 1); }
+    if (cov) coverage[((addr - 0x80000000u) >> 2) & 0x3FFFFF] = 1;
     if (nlogcall < 0) logcall_init();
     for (int i = 0; i < nlogcall; i++)
         if (logcall[i] == addr) {
