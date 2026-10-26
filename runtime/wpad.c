@@ -43,6 +43,8 @@ static void scripted_input(void) {
         if (*s == ';') s++;
     }
     g_pad.buttons = b;
+    /* pointer, -1..1; without RT_IR it points off-screen so scripts navigate with the d-pad */
+    g_pad.ir_valid = getenv("RT_IR") && sscanf(getenv("RT_IR"), "%f,%f", &g_pad.ir_x, &g_pad.ir_y) == 2;
     /* P / Q: hold the remote pointing up / down (gravity along the remote's length) instead of flat */
     g_pad.rest_y = (float)pose; g_pad.rest_z = pose ? 0.0f : 1.0f;
     if (swing && !g_pad.swing_t) wpad_start_swing();
@@ -148,23 +150,25 @@ HLE(WPADRead) {
     mw16(st + 0x4, (u16)(s16)(g_pad.acc_y * 100));
     mw16(st + 0x6, (u16)(s16)(g_pad.acc_z * 100));
     if (g_pad.ir_valid) {
-        /* two sensor-bar dots ~200 px apart around the pointed-at position (pointer moves opposite the dots) */
-        float cx = 512 - g_pad.ir_x * 400, cy = 384 - g_pad.ir_y * 300;
+        /* two sensor-bar dots 360 px apart around the pointed-at position (dots move opposite the pointer);
+         * KPAD only accepts dot pairs that put the remote within this game's distance limit (~1 m);
+         * the y offset cancels KPAD's correction for the sensor bar sitting below the TV */
+        float cx = 512 - g_pad.ir_x * 225, cy = 486 - g_pad.ir_y * 225;
         for (int k = 0; k < 2; k++) {
             u32 o = st + 0x8 + 8 * k;
-            mw16(o + 0, (u16)(s16)(cx + (k ? 100 : -100)));
+            mw16(o + 0, (u16)(s16)(cx + (k ? 180 : -180)));
             mw16(o + 2, (u16)(s16)cy);
             mw16(o + 4, 4);    /* size */
             mw8(o + 6, (u8)k); /* traceID */
         }
     }
-    if (getenv("RT_PADLOG") && c->lr == 0x8050B6E0) {   /* debug: the game's KPADStatus for this channel */
+    if (getenv("RT_PADLOG") && c->lr == 0x8050B6E0) {   /* debug: the game's KPADStatus (read just before) */
         u32 k = st - 1056;
-        fprintf(stderr, "pad t%llu swing%d raw %.2f %.2f %.2f kpad:", (unsigned long long)ticks, g_pad.swing_t, g_pad.acc_x, g_pad.acc_y, g_pad.acc_z);
-        for (int i = 0; i < 0x40; i += 4) fprintf(stderr, " %08X", mr32(k + i));
-        fprintf(stderr, " | kp idx %d cnt %d samplecb %08X\n", mr8(0x80784CD8 + 270), mr8(0x80784CD8 + 271), sampling_cb[0]);
+        float f[8];
+        for (int i = 0; i < 8; i++) { u32 v = mr32(k + 0xC + 4 * i); memcpy(&f[i], &v, 4); }
+        fprintf(stderr, "pad t%llu hold %04X acc %.2f %.2f %.2f pos %.3f %.3f dpd_valid %d\n", (unsigned long long)ticks,
+                mr32(k), f[0], f[1], f[2], f[5], f[6], (s8)mr8(k + 0x5E));
     }
-    if (getenv("RT_PADLOG") && c->lr != 0x8050B6E0 && ticks % 600 == 0) fprintf(stderr, "wpadread from %08X\n", c->lr);
     mw8(st + 0x28, 0);   /* dev: core */
     mw8(st + 0x29, 0);   /* err: none */
 }

@@ -51,4 +51,9 @@ Check in over SSH:
 - Swing is a 13-sample acceleration profile (Space key, or `S` in RT_INPUT); `P`/`Q` in
   RT_INPUT hold the remote pointing up/down. RT_FRAMES_FROM/TO limit frame dumps; RT_PADLOG
   logs the game's KPADStatus.
-- Next: check the IR pointer (KPAD pos still reads 0,0), pitching gesture, swing timing.
+- FIX: Wii Remote pointer works (mouse in the window). KPAD rejected our sensor-bar dots: this
+  game caps the remote distance at ~1 m, so the dots are now 360 px apart, and the y offset
+  cancels KPAD's sensor-bar-below-TV correction. Centre reads (0,0), corners about +-1. The P1
+  hand cursor shows and highlights menu items. Contact sheet: build/pointer_works.png
+- Scripted runs keep the pointer off-screen unless RT_IR="x,y" is set (d-pad navigation).
+- Next: pitching gesture, swing timing, desktop input test.
