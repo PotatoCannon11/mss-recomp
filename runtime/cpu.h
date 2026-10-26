@@ -124,10 +124,10 @@ void ppc_stswi(CPU *c, int rs, u32 ea, int n);
 
 #define WEAK __attribute__((weak))
 #ifdef TRACE
-void trace_enter(u32 addr);
-#define FN_ENTER(a) trace_enter(a)
+void trace_enter(u32 addr, u32 lr);
+#define FN_ENTER(a, lr) trace_enter(a, lr)
 #else
-#define FN_ENTER(a) ((void)0)
+#define FN_ENTER(a, lr) ((void)0)
 #endif
 
 /* set by the host timer thread; checked on loop back-edges so long-running guest loops can be

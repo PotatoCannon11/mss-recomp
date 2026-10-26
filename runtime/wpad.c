@@ -14,8 +14,41 @@ HostPad g_pad = {.acc_z = 1.0f, .ir_valid = 1};
 static u32 connect_cb[4], ext_cb[4], sampling_cb[4], fmt[4];
 static int announced;
 
+/* scripted input for testing without a window: RT_INPUT="from-to:KEYS;..." in retrace ticks
+ * (60 per second). KEYS: A B 1 2 + - H (home) U D L R (d-pad) S (swing); e.g. "2200-2205:A" */
+static u64 ticks;
+static void scripted_input(void) {
+    const char *s = getenv("RT_INPUT");
+    if (!s) return;
+    u16 b = 0;
+    int swing = 0;
+    while (*s) {
+        unsigned long a = strtoul(s, (char **)&s, 10), z = a;
+        if (*s == '-') z = strtoul(s + 1, (char **)&s, 10);
+        if (*s == ':') s++;
+        int on = ticks >= a && ticks <= z;
+        for (; *s && *s != ';'; s++) {
+            if (!on) continue;
+            switch (*s) {
+            case 'A': b |= 0x0800; break; case 'B': b |= 0x0400; break;
+            case '1': b |= 0x0200; break; case '2': b |= 0x0100; break;
+            case '+': b |= 0x0010; break; case '-': b |= 0x1000; break;
+            case 'H': b |= 0x8000; break;
+            case 'U': b |= 0x0008; break; case 'D': b |= 0x0004; break;
+            case 'L': b |= 0x0001; break; case 'R': b |= 0x0002; break;
+            case 'S': swing = 1; break;
+            }
+        }
+        if (*s == ';') s++;
+    }
+    g_pad.buttons = b;
+    g_pad.acc_x = swing ? 3.5f : 0; g_pad.acc_z = swing ? 3.0f : 1.0f;
+}
+
 /* called on every VI retrace (interrupt context) */
 void wpad_tick(CPU *c) {
+    ticks++;
+    scripted_input();
     if (!announced) {
         announced = 1;
         if (connect_cb[0])

@@ -36,3 +36,6 @@ void rt_timer_start(void);
 void ios_init(void);
 int ios_deliver(CPU *c);
 int ios_pending(void);
+void audio_frame_done(void);
+int dvd_pending(void);
+int dvd_deliver(CPU *c);

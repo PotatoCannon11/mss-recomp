@@ -59,6 +59,27 @@ HLE(EnableMetroTRKInterrupts) { (void)c; }
 HLE(SIInit) { (void)c; }                   /* GameCube controller serial bus */
 
 
+/* completed drive commands are reported from the interrupt path, after the request has returned */
+typedef struct { u32 block, cb, result; } DvdDone;
+static DvdDone dvd_q[64];
+static int dvd_n;
+static void dvd_defer(u32 block, u32 cb, u32 result) {
+    if (dvd_n < 64) dvd_q[dvd_n++] = (DvdDone){block, cb, result};
+}
+int dvd_pending(void) { return dvd_n; }
+int dvd_deliver(CPU *c) {
+    if (!dvd_n) return 0;
+    DvdDone q[64];
+    int n = dvd_n;
+    memcpy(q, dvd_q, sizeof(DvdDone) * n);
+    dvd_n = 0;
+    for (int i = 0; i < n; i++) {
+        mw32(q[i].block + 0x0C, 0);   /* idle (DVD_STATE_END) */
+        guest_call(c, q[i].cb, q[i].result, q[i].block);
+    }
+    return 1;
+}
+
 /* ---- DVD: the SDK's file layer (DVDOpen, FST lookup) runs as recompiled code; the drive is ours */
 void FN___DVDFSInit(CPU *c);
 HLE(DVDInit) { FN___DVDFSInit(c); }
@@ -66,21 +87,21 @@ HLE(DVDReadAbsAsyncPrio) {
     u32 block = c->r[3], dst = c->r[4], len = c->r[5], off = c->r[6], cb = c->r[7];
     LOG("DVDRead %08X <- disc %llx +%x\n", dst, (unsigned long long)off << 2, len);
     u32 n = disc_read((u64)off << 2, dst, len);
-    mw32(block + 0x0C, 0);   /* state: idle */
+    mw32(block + 0x0C, 1);   /* state: busy until the drive interrupt */
     mw32(block + 0x20, n);   /* transferTotal */
-    guest_call(c, cb, n, block);
+    dvd_defer(block, cb, n);
     c->r[3] = 1;
 }
 HLE(DVDInquiryAsync) {
     u32 block = c->r[3], info = c->r[4], cb = c->r[5];
     memset(MEM + info, 0, 0x20);
     mw16(info + 2, 0x0002);
-    mw32(block + 0x0C, 0);
-    guest_call(c, cb, 0x20, block);
+    mw32(block + 0x0C, 1);
+    dvd_defer(block, cb, 0x20);
     c->r[3] = 1;
 }
 STUB(DVDGetDriveStatus, 0)
-STUB(DVDGetCommandBlockStatus, 0)
+HLE(DVDGetCommandBlockStatus) { c->r[3] = mr32(c->r[3] + 0x0C); }
 STUB(DVDCancel, 0)
 STUB(DVDCancelAsync, 1)
 STUB(DVDCompareDiskID, 1)
@@ -89,14 +110,15 @@ STUB(DVDSetAutoFatalMessaging, 0)
 
 /* ---- audio: AI/DSP inert for now (silence); AX runs recompiled and simply never gets a DSP frame */
 HLE(AIInit) { (void)c; }
-HLE(AIInitDMA) { (void)c; }
+int g_ax_started;
+u32 g_ai_dma_addr, g_ai_dma_len;
+HLE(AIInitDMA) { g_ai_dma_addr = c->r[3]; g_ai_dma_len = c->r[4]; g_ax_started = 1; }
 STUB(AIGetDMAStartAddr, 0)
 STUB(DSPCheckInit, 1)
 HLE(DSPInit) { (void)c; }
 STUB(DSPCheckMailToDSP, 0)
 STUB(DSPCheckMailFromDSP, 0)
 STUB(DSPReadMailFromDSP, 0)
-HLE(DSPSendMailToDSP) { (void)c; }
 HLE(DSPAssertTask) { (void)c; }
 HLE(DSPAddTask) { (void)c; }
 HLE(__AXOutInitDSP) { (void)c; }     /* boots the AX microcode and waits for it */

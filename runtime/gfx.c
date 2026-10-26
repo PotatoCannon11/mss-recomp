@@ -679,8 +679,8 @@ void gfx_efb_copy(u32 cmd) {
     if (to_xfb) {
         g_gpu.frames++;
         if (getenv("RT_GFXLOG"))
-            fprintf(stderr, "frame %llu: %llu draws, %llu vertices, %d programs, %d textures\n", (unsigned long long)g_gpu.frames,
-                    (unsigned long long)draws, (unsigned long long)verts_total, nprogs, ntex);
+            fprintf(stderr, "frame %llu: %llu draws, %llu vertices, %d programs, %d textures, %llu DL calls, %d bad ops\n", (unsigned long long)g_gpu.frames,
+                    (unsigned long long)draws, (unsigned long long)verts_total, nprogs, ntex, (unsigned long long)g_gpu.ndl, g_gpu.bad_ops);
         draws = verts_total = 0;
         gfx_present(sx, sy, sw, sh);
     } else if (sw > 0 && sh > 0 && sx + sw <= EFB_W && sy + sh <= EFB_H) {

@@ -152,6 +152,10 @@ void FN_DecrementerExceptionHandler(CPU *c);
 void FN___VIRetraceHandler(CPU *c);
 void FN___OSReschedule(CPU *c);
 void FN_GXFinishInterruptHandler(CPU *c);
+void FN___AXOutNewFrame(CPU *c);
+extern int g_ax_started;
+static u64 ax_next;
+#define AX_PERIOD ((u64)TB_CLOCK * 96 / 32000)   /* one AX frame: 96 samples at 32 kHz */
 void FN_GXTokenInterruptHandler(CPU *c);
 
 static int poll_irqs(CPU *c) {
@@ -194,6 +198,18 @@ static int poll_irqs(CPU *c) {
         FN_GXFinishInterruptHandler(c);
         any = 1;
     }
+    if (g_ax_started && now >= ax_next) {   /* AI DMA done: the DSP is ready for the next audio frame */
+        if (!ax_next || now - ax_next > 8 * AX_PERIOD)
+            ax_next = now;
+        ax_next += AX_PERIOD;
+        mw32(0x800000D4u, IRQ_CONTEXT);
+        FN___AXOutNewFrame(c);
+        audio_frame_done();
+        any = 1;
+    }
+    mw32(0x800000D4u, IRQ_CONTEXT);
+    if (dvd_deliver(c))   /* drive interrupts */
+        any = 1;
     mw32(0x800000D4u, IRQ_CONTEXT);
     if (ios_deliver(c))   /* IPC replies */
         any = 1;
@@ -218,6 +234,8 @@ static int poll_irqs(CPU *c) {
 
 static void wait_next_event(void) {
     u64 now = now_tb(), next = vi_next;
+    if (g_ax_started && ax_next < next)
+        next = ax_next;
     if (dec_armed && dec_deadline < next)
         next = dec_deadline;
     if (g_deterministic) {
@@ -293,16 +311,27 @@ static void dump_threads(void) {
     }
 }
 
+extern volatile int g_prof_on;
+void prof_dump(void);
+
 static void *timer_thread(void *arg) {
     (void)arg;
-    const char *d = getenv("RT_DUMP_AFTER");
-    long dump_ms = d ? atol(d) * 1000 : -1, ms = 0;
+    const char *d = getenv("RT_DUMP_AFTER"), *pr = getenv("RT_PROFILE");
+    long dump_ms = d ? atol(d) * 1000 : -1, ms = 0, p0 = -1, p1 = -1;
+    if (pr) { p0 = atol(pr) * 1000; const char *dash = strchr(pr, '-'); p1 = dash ? atol(dash + 1) * 1000 : p0 + 1000; }
+    struct timespec t0;
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    int dumped = 0, pstate = 0;
     for (;;) {
         struct timespec ts = {0, 1000000};   /* 1 ms */
         nanosleep(&ts, NULL);
         g_irq_pending = 1;
-        if (++ms == dump_ms)
-            dump_threads();
+        struct timespec t;
+        clock_gettime(CLOCK_MONOTONIC, &t);
+        ms = (t.tv_sec - t0.tv_sec) * 1000 + (t.tv_nsec - t0.tv_nsec) / 1000000;
+        if (dump_ms >= 0 && ms >= dump_ms && !dumped) { dumped = 1; dump_threads(); }
+        if (p0 >= 0 && ms >= p0 && pstate == 0) { pstate = 1; g_prof_on = 1; }
+        if (p1 >= 0 && ms >= p1 && pstate == 1) { pstate = 2; g_prof_on = 0; prof_dump(); }
     }
     return NULL;
 }
@@ -328,7 +357,8 @@ void rt_async_irq(CPU *c) {
     if (in_irq || !(c->msr & 0x8000u) || mr32(0x800000E4u) == 0)
         return;
     u64 now = now_tb();
-    if (!(now >= vi_next || (dec_armed && now >= dec_deadline) || g_gpu.irq_finish || g_gpu.irq_token || ios_pending()))
+    if (!(now >= vi_next || (dec_armed && now >= dec_deadline) || g_gpu.irq_finish || g_gpu.irq_token || ios_pending() || dvd_pending() ||
+          (g_ax_started && now >= ax_next)))
         return;
     CPU save = *c;
     if (poll_irqs(c))

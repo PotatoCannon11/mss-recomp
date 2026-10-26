@@ -293,8 +293,61 @@ void psq_store(CPU *c, int fs, u32 ea, int w, int i) {
 static u32 ring[RING];
 static unsigned ring_pos;
 static int trace_on = -1;
-void trace_enter(u32 addr) {
+/* call profile (RT_PROFILE=<from s>-<to s>): call counts per function over a window */
+static u32 *prof_cnt;
+volatile int g_prof_on;
+static int prof_slot(u32 addr) { return (int)(((addr - 0x80000000u) >> 2) & 0x3FFFFF); }
+void prof_dump(void) {
+    if (!prof_cnt) return;
+    fprintf(stderr, "---- hottest functions\n");
+    int top = getenv("RT_PROFILE_TOP") ? atoi(getenv("RT_PROFILE_TOP")) : 40;
+    for (int k = 0; k < top; k++) {
+        int best = -1;
+        for (int i = 0; i < (1 << 22); i++) if (prof_cnt[i] && (best < 0 || prof_cnt[i] > prof_cnt[best])) best = i;
+        if (best < 0) break;
+        u32 a = 0x80000000u + ((u32)best << 2);
+        fprintf(stderr, "%10u  %08X %s\n", prof_cnt[best], a, fn_name(a));
+        prof_cnt[best] = 0;
+    }
+}
+static u32 callers_of = 1;
+static u32 logcall[32];
+static int nlogcall = -1;
+static void logcall_init(void) {
+    nlogcall = 0;
+    const char *s = getenv("RT_LOGCALL");
+    while (s && *s && nlogcall < 32) {
+        logcall[nlogcall++] = (u32)strtoul(s, (char **)&s, 16);
+        if (*s == ',') s++;
+    }
+}
+static void print_arg(u32 v) {
+    if (v >= 0x80000000u && v < 0x81800000u && MEM[v] >= 32 && MEM[v] < 127 && MEM[v + 1] >= 32 && MEM[v + 1] < 127)
+        fprintf(stderr, " \"%.40s\"", (char *)MEM + v);
+    else
+        fprintf(stderr, " %08X", v);
+}
+void trace_enter(u32 addr, u32 lr) {
     ring[ring_pos++ % RING] = addr;
+    if (nlogcall < 0) logcall_init();
+    for (int i = 0; i < nlogcall; i++)
+        if (logcall[i] == addr) {
+            fprintf(stderr, "call %s from %08X (%s):", fn_name(addr), lr - 4, fn_name(lr - 4));
+            for (int k = 3; k <= 6; k++) print_arg(g_cpu.r[k]);
+            fprintf(stderr, "\n");
+        }
+    if (callers_of == 1) callers_of = getenv("RT_CALLERS") ? (u32)strtoul(getenv("RT_CALLERS"), NULL, 16) : 0;
+    if (callers_of && addr == callers_of && g_prof_on) {
+        if (!prof_cnt) prof_cnt = calloc(1 << 22, 4);
+        prof_cnt[prof_slot(lr - 4)]++;   /* count call sites instead of callees */
+        return;
+    }
+    static u32 prof_thread = 1;
+    if (prof_thread == 1) prof_thread = getenv("RT_PROFILE_THREAD") ? (u32)strtoul(getenv("RT_PROFILE_THREAD"), NULL, 16) : 0;
+    if (!callers_of && g_prof_on && (!prof_thread || mr32(0x800000E4u) == prof_thread)) {
+        if (!prof_cnt) prof_cnt = calloc(1 << 22, 4);
+        prof_cnt[prof_slot(addr)]++;
+    }
     if (trace_on < 0)
         trace_on = getenv("RT_TRACE") != NULL;
     if (trace_on)

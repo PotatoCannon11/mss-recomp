@@ -156,6 +156,7 @@ static Fd *getfd(s32 fd) { return fd >= 0 && fd < 32 && fds[fd].used ? &fds[fd] 
 
 static s32 do_close(s32 fd) {
     Fd *f = getfd(fd);
+    LOG("ios: close fd %d\n", fd);
     if (!f) return IPC_EINVAL;
     if (f->f) fclose(f->f);
     f->used = 0;
@@ -164,6 +165,7 @@ static s32 do_close(s32 fd) {
 
 static s32 do_read(s32 fd, u32 buf, u32 len) {
     Fd *f = getfd(fd);
+    LOG("ios: read fd %d (%s) %u bytes\n", fd, f ? f->path : "?", len);
     if (!f || f->kind != 2) return IPC_EINVAL;
     return (s32)fread(MEM + buf, 1, len, f->f);
 }
@@ -176,6 +178,7 @@ static s32 do_write(s32 fd, u32 buf, u32 len) {
 }
 static s32 do_seek(s32 fd, s32 off, s32 whence) {
     Fd *f = getfd(fd);
+    LOG("ios: seek fd %d %d/%d\n", fd, off, whence);
     if (!f || f->kind != 2) return IPC_EINVAL;
     if (fseek(f->f, off, whence == 0 ? SEEK_SET : whence == 1 ? SEEK_CUR : SEEK_END)) return FS_INVALID;
     return (s32)ftell(f->f);
@@ -305,6 +308,7 @@ static s32 es_ioctlv(u32 cmd, u32 nin, u32 nout, u32 vec) {
 
 static s32 do_ioctl(s32 fd, u32 cmd, u32 in, u32 inlen, u32 out, u32 outlen) {
     Fd *f = getfd(fd);
+    LOG("ios: ioctl fd %d (%s) cmd %u\n", fd, f ? f->path : "?", cmd);
     if (!f) return IPC_EINVAL;
     if (f->kind == 1 || f->kind == 2) return fs_ioctl(f, cmd, in, inlen, out, outlen);
     if (out && outlen) memset(MEM + out, 0, outlen);
@@ -312,6 +316,7 @@ static s32 do_ioctl(s32 fd, u32 cmd, u32 in, u32 inlen, u32 out, u32 outlen) {
 }
 static s32 do_ioctlv(s32 fd, u32 cmd, u32 nin, u32 nout, u32 vec) {
     Fd *f = getfd(fd);
+    LOG("ios: ioctlv fd %d (%s) cmd %u\n", fd, f ? f->path : "?", cmd);
     if (!f) return IPC_EINVAL;
     if (f->kind == 1) return fs_ioctlv(cmd, nin, nout, vec);
     if (f->kind == 3) return es_ioctlv(cmd, nin, nout, vec);

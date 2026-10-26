@@ -193,7 +193,7 @@ class Gen:
         if not self.ends_flow(last):
             tail = f"    {self.call(end)} return;\n" if end in self.entries else "    return;\n"
         nm = self.names.get(start, "")
-        return (f"WEAK void {self.fn(start)}(CPU *c) {{ /* {nm} */\n    FN_ENTER(0x{start:08X}); u32 ea; (void)ea; double t0, t1; (void)t0; (void)t1;\n"
+        return (f"WEAK void {self.fn(start)}(CPU *c) {{ /* {nm} */\n    FN_ENTER(0x{start:08X}, c->lr); u32 ea; (void)ea; double t0, t1; (void)t0; (void)t1;\n"
                 + "\n".join(body) + "\n" + tail + "}\n")
 
     def ends_flow(self, w):
