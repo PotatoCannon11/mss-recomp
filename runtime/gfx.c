@@ -42,8 +42,9 @@ static int ctx_init(void) {
 /* ---------------------------------------------------------------- vertices */
 
 typedef struct {
-    float pos[3], nrm[3], col0[4], col1[4], tex[8][2];
-    float pnmtx, texmtx[8];
+    float pos[3], nrm[3], tex[8][2];
+    u8 col0[4], col1[4];   /* GX colours are 8-bit, so normalised bytes are exact */
+    u8 mtx[12];            /* [0] position matrix index, [4..11] texture matrix indices */
 } GLVertex;   /* attribute locations: 0 pos, 1 nrm, 2-3 colours, 4-7 texcoord pairs, 8 pnmtx, 9-10 texmtx */
 
 
@@ -740,11 +741,13 @@ void gfx_draw(int prim, const GXVertex *v, u32 n) {
         GLVertex *o = &bverts[nbv++];
         memcpy(o->pos, v[i].pos, 12);
         memcpy(o->nrm, v[i].nrm, 12);
-        memcpy(o->col0, v[i].col[0], 16);
-        memcpy(o->col1, v[i].col[1], 16);
         memcpy(o->tex, v[i].tex, sizeof o->tex);
-        o->pnmtx = (float)v[i].pnmtx;
-        for (int t = 0; t < 8; t++) o->texmtx[t] = (float)v[i].texmtx[t];
+        for (int k = 0; k < 4; k++) {
+            o->col0[k] = (u8)(v[i].col[0][k] * 255.0f + 0.5f);
+            o->col1[k] = (u8)(v[i].col[1][k] * 255.0f + 0.5f);
+        }
+        o->mtx[0] = (u8)v[i].pnmtx;
+        for (int t = 0; t < 8; t++) o->mtx[4 + t] = (u8)v[i].texmtx[t];
     }
     switch (prim) {
     case 0: case 1:   /* quads */
@@ -1028,15 +1031,15 @@ void gfx_init(void) {
     GLsizei st = sizeof(GLVertex);
     glEnableVertexAttribArray(0); glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, st, (void *)offsetof(GLVertex, pos));
     glEnableVertexAttribArray(1); glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, st, (void *)offsetof(GLVertex, nrm));
-    glEnableVertexAttribArray(2); glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, st, (void *)offsetof(GLVertex, col0));
-    glEnableVertexAttribArray(3); glVertexAttribPointer(3, 4, GL_FLOAT, GL_FALSE, st, (void *)offsetof(GLVertex, col1));
+    glEnableVertexAttribArray(2); glVertexAttribPointer(2, 4, GL_UNSIGNED_BYTE, GL_TRUE, st, (void *)offsetof(GLVertex, col0));
+    glEnableVertexAttribArray(3); glVertexAttribPointer(3, 4, GL_UNSIGNED_BYTE, GL_TRUE, st, (void *)offsetof(GLVertex, col1));
     for (int i = 0; i < 4; i++) {
         glEnableVertexAttribArray(4 + i);
         glVertexAttribPointer(4 + i, 4, GL_FLOAT, GL_FALSE, st, (void *)(offsetof(GLVertex, tex) + 16 * i));
     }
-    glEnableVertexAttribArray(8); glVertexAttribPointer(8, 1, GL_FLOAT, GL_FALSE, st, (void *)offsetof(GLVertex, pnmtx));
-    glEnableVertexAttribArray(9); glVertexAttribPointer(9, 4, GL_FLOAT, GL_FALSE, st, (void *)offsetof(GLVertex, texmtx));
-    glEnableVertexAttribArray(10); glVertexAttribPointer(10, 4, GL_FLOAT, GL_FALSE, st, (void *)(offsetof(GLVertex, texmtx) + 16));
+    glEnableVertexAttribArray(8); glVertexAttribPointer(8, 1, GL_UNSIGNED_BYTE, GL_FALSE, st, (void *)offsetof(GLVertex, mtx));
+    glEnableVertexAttribArray(9); glVertexAttribPointer(9, 4, GL_UNSIGNED_BYTE, GL_FALSE, st, (void *)(offsetof(GLVertex, mtx) + 4));
+    glEnableVertexAttribArray(10); glVertexAttribPointer(10, 4, GL_UNSIGNED_BYTE, GL_FALSE, st, (void *)(offsetof(GLVertex, mtx) + 8));
     glClearColor(0, 0, 0, 1);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     ready = 1;
