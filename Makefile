@@ -35,5 +35,5 @@ MOD_SRC = $(wildcard mods/*.c)
 mods: $(MOD_SRC:mods/%.c=build/mods/%.so)
 build/mods/%.so: mods/%.c runtime/mod_api.h runtime/cpu.h
 	@mkdir -p build/mods
-	$(CC) -O2 -shared -fPIC -Iruntime -o $@ $< -lm
+	$(CC) -O2 -shared -fPIC -Iruntime -o $@ $< -lm -lGL
 .PHONY: mods

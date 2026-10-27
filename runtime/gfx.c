@@ -1174,8 +1174,6 @@ void gfx_present(int sx, int sy, int sw, int sh) {
     record_video(sx, sy, sw, sh);
     window_present(efb_color, px_x(sx), sy * S, px_x(sx + sw) - px_x(sx), sh * S, EW, EH);
     track_window();
-    void mod_present(unsigned long long frame, int w, int h);
-    mod_present(g_gpu.frames, EW, EH);
     glBindFramebuffer(GL_FRAMEBUFFER, efb_fbo);
 }
 

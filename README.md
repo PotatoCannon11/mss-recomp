@@ -48,5 +48,5 @@ run code every frame. `make mods` builds the examples in `mods/` (e.g. `mods/rai
 colours through the rainbow); run with `RT_MODS=build/mods/rainbow.so ./build/mss ...` or copy `.so` files
 to `~/.local/share/mss-recomp/mods/`. Unhooked functions pay one bit test at entry.
 API v2 adds `on_input` (read or rewrite the Wii Remote state each tick before the game sees it) and
-`on_present` (after each frame, GL context current, for overlays); `mods/autoswing.c` turns the 2 button
-into a full swing.
+`on_present` (each frame just before it is shown, window framebuffer bound: draw overlays with GL);
+`mods/autoswing.c` turns the 2 button into a full swing, `mods/fpsbar.c` draws a frame-time bar.

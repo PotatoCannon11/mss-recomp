@@ -258,4 +258,6 @@ Check in over SSH:
   boardwalk, beach), Lakitu hints, NPC "!" icons with Talk prompts, no faults.
   build/challenge_explore.png. A Challenge match needs purposeful play (talking to NPCs / finding
   enemies), beyond blind scripting - best left to a human play test.
-- Next: an overlay example using on_present (call it before the swap); human Challenge play test.
+- on_present now runs just before the swap with the window framebuffer bound, so mods can draw
+  overlays. Example mods/fpsbar.c (frame-time bar) verified in a window grab. Mods link -lGL.
+- Next: human Challenge play test (first in-stage match).

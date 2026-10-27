@@ -202,5 +202,11 @@ void window_present(unsigned efb_tex, int sx, int sy, int sw, int sh, int efb_w,
     int dw = ww, dh = wh, dx = 0, dy = 0;
     glBlitFramebuffer(sx, efb_h - sy, sx + sw, efb_h - (sy + sh), dx, dy + dh, dx + dw, dy, GL_COLOR_BUFFER_BIT, GL_LINEAR);
     (void)efb_w;
+    /* mods draw overlays here: window framebuffer bound, viewport = whole window */
+    void mod_present(unsigned long long frame, int w, int h);
+    extern GPUState g_gpu;
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glViewport(0, 0, ww, wh);
+    mod_present(g_gpu.frames, ww, wh);
     SDL_GL_SwapWindow_(win);
 }

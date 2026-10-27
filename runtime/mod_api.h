@@ -52,5 +52,6 @@ typedef struct MssApi {
     void (*log)(const char *fmt, ...);
     /* v2 */
     void (*on_input)(MssInputFn fn, void *user);       /* game thread, every tick, before the game reads the pad */
-    void (*on_present)(MssPresentFn fn, void *user);   /* GPU thread, after each frame is shown (GL context current) */
+    void (*on_present)(MssPresentFn fn, void *user);   /* GPU thread, each frame just before it is shown: the window
+                                                          framebuffer (0) is bound with the window's size, draw with GL */
 } MssApi;
