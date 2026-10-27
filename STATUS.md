@@ -254,4 +254,8 @@ Check in over SSH:
 - Mod API v2: on_input (rewrite buttons/accelerometer/pointer/Nunchuk each tick before the game reads
   them) and on_present (GPU thread, after each frame). Example mods/autoswing.c: 2 = one-button swing.
   Verified in RT_PADLOG: the 2 press is hidden and the swing profile reaches KPAD's accelerometer.
-- Next: longer Challenge play (first in-stage match); an overlay example using on_present.
+- Challenge free-roam explored for ~7 min (scripted pointer + hold A): area transitions (plaza,
+  boardwalk, beach), Lakitu hints, NPC "!" icons with Talk prompts, no faults.
+  build/challenge_explore.png. A Challenge match needs purposeful play (talking to NPCs / finding
+  enemies), beyond blind scripting - best left to a human play test.
+- Next: an overlay example using on_present (call it before the swap); human Challenge play test.
