@@ -193,3 +193,8 @@ Check in over SSH:
 - RT_FPS now also prints texture uploads, vertex sources and batch-break reasons; RT_VFMTSTAT.
 - Next: user retest at 4x; then fewer GL draws (batch across texture changes with texture arrays /
   bindless), game-thread hot paths (paired-single quantised loads), frame pacing.
+- User desk test at 4x after the GPU-thread work: 545 gameplay samples, avg 59.9 fps, min 57.5, gpu thread peak 27%. Earlier sessions dipped to 50-53 fps at
+  61-70% busy on the same effect-heavy frames. Remaining sub-57 dips are on near-empty menu/loading
+  frames (game thread or disc), not rendering.
+- Next: matrix palette to stop position-matrix reloads breaking batches (largest batch-break cause),
+  texture batching, the menu/loading dips, baserunning input.
