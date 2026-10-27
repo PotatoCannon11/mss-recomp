@@ -523,6 +523,8 @@ int main(int argc, char **argv) {
     rt_timer_start();
     void hostprof_start(void);
     if (!ENV("RT_HOSTPROF_GPU")) hostprof_start();
+    void mods_load(void);
+    mods_load();
     fprintf(stderr, "boot: entry %08X (%s)\n", g_entry, fn_name(g_entry));
     call_indirect(c, g_entry);
     fprintf(stderr, "entry returned\n");

@@ -226,3 +226,13 @@ Check in over SSH:
   (build/challenge_story.png). Exhibition regression run fine (59.4 fps).
 - Debug: DVDRead log names the file and offset (RT_HLELOG).
 - Next: play into a Challenge stage; Nunchuk extension (optional control style).
+
+## 2026-10-26 late night (mods)
+- Challenge mode: from the stage map, A opens the team screen; story play continues from there.
+- NEW: native mod layer. FN_ENTER (release builds) tests one bit per function in a 512 KB bitmap; hooked
+  functions dispatch to mod callbacks (skip / replace / call_original). API (runtime/mod_api.h): guest
+  memory accessors, symbol lookup by name, hooks, per-retrace frame callbacks, logging. Loader: RT_MODS
+  or ~/.local/share/mss-recomp/mods/*.so. Example mods/rainbow.c (hooks GXSetChanMatColor/AmbColor,
+  visibly tints players); `make mods`. No measurable fps cost (59.9 fps in a match).
+- Next: more mod hooks surface (renderer callbacks, input), mod examples for gameplay (needs game
+  struct knowledge from the decomp), Nunchuk.

@@ -132,7 +132,10 @@ void ppc_stswi(CPU *c, int rs, u32 ea, int n);
 void trace_enter(u32 addr, u32 lr);
 #define FN_ENTER(a, lr) trace_enter(a, lr)
 #else
-#define FN_ENTER(a, lr) ((void)0)
+/* mod hooks: one bit per function entry; only hooked functions call into the mod layer */
+extern u8 g_hookbits[1 << 19];
+int mod_enter(CPU *c, u32 addr);
+#define FN_ENTER(a, lr) do { if (__builtin_expect((g_hookbits[((a) >> 5) & 0x7FFFF] >> (((a) >> 2) & 7)) & 1, 0) && mod_enter(c, (a))) return; } while (0)
 #endif
 
 /* set by the host timer thread; checked on loop back-edges so long-running guest loops can be

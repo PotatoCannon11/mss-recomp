@@ -28,3 +28,12 @@ GEN:
 	python3 tools/ppcrecomp.py $(DOL) $(SYMBOLS) build/gen --names tools/ref_names.txt
 
 .PHONY: GEN
+
+# example mods (mods/*.c -> build/mods/*.so); load with RT_MODS=build/mods/x.so or copy to
+# ~/.local/share/mss-recomp/mods/
+MOD_SRC = $(wildcard mods/*.c)
+mods: $(MOD_SRC:mods/%.c=build/mods/%.so)
+build/mods/%.so: mods/%.c runtime/mod_api.h runtime/cpu.h
+	@mkdir -p build/mods
+	$(CC) -O2 -shared -fPIC -Iruntime -o $@ $< -lm
+.PHONY: mods

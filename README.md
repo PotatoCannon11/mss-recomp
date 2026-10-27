@@ -33,3 +33,11 @@ Internal resolution follows the window height (or `RT_SCALE=N` x the console's 5
 
 Debug knobs: `RT_TRACE`, `RT_HLELOG`, `RT_GFXLOG`, `RT_DUMP_AFTER=<s>` (thread dump),
 `RT_DETERMINISTIC` (virtual time, reproducible runs), `tools/hang.sh <s>` (guest stack of a hang).
+
+## Mods
+
+Native mods are C shared libraries (`runtime/mod_api.h`). A mod can hook any recompiled game function
+by name (run before it, replace it, or call the original and post-process), read/write guest memory and
+run code every frame. `make mods` builds the examples in `mods/` (e.g. `mods/rainbow.c`, tinting lit
+colours through the rainbow); run with `RT_MODS=build/mods/rainbow.so ./build/mss ...` or copy `.so` files
+to `~/.local/share/mss-recomp/mods/`. Unhooked functions pay one bit test at entry.

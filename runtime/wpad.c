@@ -105,8 +105,10 @@ static void swing_step(void) {
 
 /* called on every VI retrace (interrupt context) */
 void watch_tick(u64 ticks);
+void mod_frame(void);
 void wpad_tick(CPU *c) {
     ticks++;
+    mod_frame();
     watch_tick(ticks);
     scripted_input();
     g_pad.acc_x = 0; g_pad.acc_y = g_pad.rest_y; g_pad.acc_z = g_pad.rest_z;
