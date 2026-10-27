@@ -25,6 +25,10 @@ Running (from ~/mss-decomp/recomp):
 runs headless (set `RT_FRAMES=dir` to dump frames, `RT_WAV=file.wav` to record audio).
 
 Controls (Wii Remote): mouse = pointer, left/right click = A/B, arrows = d-pad, Z/X = 1/2,
+Gamepads (anything SDL knows: Xbox, PlayStation, Switch Pro, ...) work too and can be plugged in at any
+time: A/B = A/B, X/Y = 1/2, Start/Back/Guide = +/-/HOME, d-pad or left stick = d-pad, right stick = pointer,
+RT or RB = swing (and the pitching pull-up), LT = throw. The mouse takes the pointer back when moved.
+
 The game runs in its native 16:9 widescreen mode (set `RT_43=1` for 4:3). Any window shape works and the window can be resized live: the picture fills it with no bars and nothing
 stretched or cropped (wider than 16:9 shows more to the sides, taller shows more above and below; the HUD
 keeps its proportions, centred). `RT_FULLSCREEN=1` uses the whole monitor at its own resolution and shape.

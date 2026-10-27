@@ -7,6 +7,8 @@
  *   Enter            +                 Backspace             -
  *   H                HOME              Space                 swing / pitch wind-up (pull up)
  *   C                pitch: throw (swing down)
+ * Gamepads: A/B = A/B, X/Y = 1/2, Start/Back/Guide = +/-/HOME, d-pad or left stick = d-pad,
+ * right stick = pointer, RT/RB = swing / pull up, LT = throw
  *   Esc              quit */
 #define GL_GLEXT_PROTOTYPES
 #include <GL/gl.h>
@@ -30,6 +32,15 @@ static const u8 *(*SDL_GetKeyboardState_)(int *);
 static u32 (*SDL_GetMouseState_)(int *, int *);
 static void (*SDL_GetWindowSize_)(void *, int *, int *);
 static const char *(*SDL_GetError_)(void);
+/* game controllers (optional: resolved separately so a missing symbol doesn't disable the window) */
+static int (*SDL_NumJoysticks_)(void);
+static int (*SDL_IsGameController_)(int);
+static void *(*SDL_GameControllerOpen_)(int);
+static u8 (*SDL_GameControllerGetAttached_)(void *);
+static u8 (*SDL_GameControllerGetButton_)(void *, int);
+static short (*SDL_GameControllerGetAxis_)(void *, int);
+static const char *(*SDL_GameControllerName_)(void *);
+static void (*SDL_GameControllerUpdate_)(void);
 
 #define SYM(n) (*(void **)&n##_ = dlsym(sdl, #n))
 
@@ -54,6 +65,8 @@ static int window_init_locked(int w, int h) {
         !SYM(SDL_GetMouseState) || !SYM(SDL_GetWindowSize) || !SYM(SDL_GetError))
         return 0;
     if (SDL_Init_(0x20 | 0x2000) != 0) { fprintf(stderr, "window: %s\n", SDL_GetError_()); return 0; }
+    SYM(SDL_NumJoysticks); SYM(SDL_IsGameController); SYM(SDL_GameControllerOpen); SYM(SDL_GameControllerGetAttached);
+    SYM(SDL_GameControllerGetButton); SYM(SDL_GameControllerGetAxis); SYM(SDL_GameControllerName); SYM(SDL_GameControllerUpdate);
     SDL_GL_SetAttribute_(17, 3);   /* SDL_GL_CONTEXT_MAJOR_VERSION */
     SDL_GL_SetAttribute_(18, 3);   /* MINOR */
     SDL_GL_SetAttribute_(21, 1);   /* PROFILE_MASK: core */
@@ -66,6 +79,55 @@ static int window_init_locked(int w, int h) {
     return 1;
 }
 
+
+/* gamepad -> Wii Remote: A/B = A/B, X/Y = 1/2, Start/Back/Guide = +/-/HOME, d-pad or left stick =
+ * d-pad, right stick moves the pointer, RT/RB = swing (and pitching pull-up), LT = throw */
+static void *pad;
+static float pad_px, pad_py;   /* pointer driven by the right stick, -1..1 */
+static int pad_ptr_active;
+static void gamepad_poll(u16 *b) {
+    if (!SDL_GameControllerGetButton_) return;
+    if (pad && !SDL_GameControllerGetAttached_(pad)) pad = NULL;
+    if (!pad) {
+        static int tick;
+        if (tick++ % 60) return;   /* look for a controller about once a second */
+        for (int i = 0; i < SDL_NumJoysticks_(); i++)
+            if (SDL_IsGameController_(i) && (pad = SDL_GameControllerOpen_(i))) {
+                fprintf(stderr, "window: controller %s\n", SDL_GameControllerName_(pad));
+                break;
+            }
+        if (!pad) return;
+    }
+    SDL_GameControllerUpdate_();
+    static const struct { int sdl; u16 wii; } map[] = {
+        {0, 0x0800}, {1, 0x0400}, {2, 0x0200}, {3, 0x0100}, {4, 0x1000}, {5, 0x8000}, {6, 0x0010},
+        {11, 0x0008}, {12, 0x0004}, {13, 0x0001}, {14, 0x0002},
+    };
+    for (unsigned i = 0; i < sizeof map / sizeof *map; i++)
+        if (SDL_GameControllerGetButton_(pad, map[i].sdl)) *b |= map[i].wii;
+    int lx = SDL_GameControllerGetAxis_(pad, 0), ly = SDL_GameControllerGetAxis_(pad, 1);
+    if (lx < -16000) *b |= 0x0001;
+    if (lx > 16000) *b |= 0x0002;
+    if (ly > 16000) *b |= 0x0004;
+    if (ly < -16000) *b |= 0x0008;
+    float rx = SDL_GameControllerGetAxis_(pad, 2) / 32767.0f, ry = SDL_GameControllerGetAxis_(pad, 3) / 32767.0f;
+    if (ENV("RT_PADLOG") && (rx != 0 || ry != 0 || SDL_GameControllerGetAxis_(pad, 4) || SDL_GameControllerGetAxis_(pad, 5)))
+        fprintf(stderr, "window: pad axes rx %.2f ry %.2f lt %d rt %d ptr %d %.2f %.2f\n", rx, ry, SDL_GameControllerGetAxis_(pad, 4), SDL_GameControllerGetAxis_(pad, 5), pad_ptr_active, pad_px, pad_py);
+    if (rx * rx + ry * ry > 0.04f) {   /* outside the dead zone: the stick drives the pointer */
+        pad_ptr_active = 1;
+        pad_px += rx * 0.035f;
+        pad_py += ry * 0.035f;
+        if (pad_px < -1) pad_px = -1; if (pad_px > 1) pad_px = 1;
+        if (pad_py < -1) pad_py = -1; if (pad_py > 1) pad_py = 1;
+    }
+    static int swing_was, throw_was;
+    int swing = SDL_GameControllerGetAxis_(pad, 5) > 16000 || SDL_GameControllerGetButton_(pad, 10);
+    int thr = SDL_GameControllerGetAxis_(pad, 4) > 16000;
+    if (swing && !swing_was && !g_pad.swing_t) wpad_start_swing();
+    if (thr && !throw_was && !g_pad.swing_t) wpad_start_gesture(1);
+    swing_was = swing;
+    throw_was = thr;
+}
 
 void window_poll(void) {
     if (!win) return;
@@ -91,9 +153,19 @@ void window_poll(void) {
     if (mb & 1) b |= 0x0800;  /* left mouse: A */
     if (k[42]) b |= 0x1000;   /* Backspace: - */
     if (k[11]) b |= 0x8000;   /* H: HOME */
+    gamepad_poll(&b);
     g_pad.buttons = b;
-    g_pad.ir_x = ww ? 2.0f * mx / ww - 1.0f : 0;
-    g_pad.ir_y = wh ? 2.0f * my / wh - 1.0f : 0;
+    static int lmx = -1, lmy = -1;
+    if (mx != lmx || my != lmy) { pad_ptr_active = 0; lmx = mx; lmy = my; }   /* the mouse takes the pointer back */
+    if (pad_ptr_active) {
+        g_pad.ir_x = pad_px;
+        g_pad.ir_y = pad_py;
+    } else {
+        g_pad.ir_x = ww ? 2.0f * mx / ww - 1.0f : 0;
+        g_pad.ir_y = wh ? 2.0f * my / wh - 1.0f : 0;
+        pad_px = g_pad.ir_x;
+        pad_py = g_pad.ir_y;
+    }
     g_pad.ir_valid = 1;
     if (ENV("RT_PADLOG")) { static int n; if (++n % 60 == 0) fprintf(stderr, "window: mouse %d,%d buttons %x win %dx%d\n", mx, my, mb, ww, wh); }
     static int space_was, c_was;

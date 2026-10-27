@@ -236,3 +236,10 @@ Check in over SSH:
   visibly tints players); `make mods`. No measurable fps cost (59.9 fps in a match).
 - Next: more mod hooks surface (renderer callbacks, input), mod examples for gameplay (needs game
   struct knowledge from the decomp), Nunchuk.
+
+## 2026-10-27 early
+- NEW: gamepad support (SDL GameController, hot-plug): buttons/d-pad/left stick, right stick drives the
+  pointer (mouse takes it back when moved), RT/RB swing, LT throw. Verified with a virtual uinput
+  X360 pad (tools/vpad.c): detected, A/B/A+B/d-pad delivered, stick moves the file-select cursor,
+  triggers produce the swing/throw accelerometer profiles.
+- Next: Nunchuk extension; more mod hook points.
