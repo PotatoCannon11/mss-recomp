@@ -261,3 +261,9 @@ Check in over SSH:
 - on_present now runs just before the swap with the window framebuffer bound, so mods can draw
   overlays. Example mods/fpsbar.c (frame-time bar) verified in a window grab. Mods link -lGL.
 - Next: human Challenge play test (first in-stage match).
+
+## 2026-10-27 (soak)
+- 20-minute continuous-match soak (scripted batting + pitching, ~75,000 frames): no faults; memory
+  settles at ~306 MB by minute 5 and stays flat (no leak); frame rate ~59.9 fps every minute,
+  lowest 2 s sample 58.5. The earlier progressive slowdown is gone.
+- Remaining: human Challenge-mode play test (first in-stage match).
