@@ -106,10 +106,16 @@ static void gamepad_poll(u16 *b) {
     for (unsigned i = 0; i < sizeof map / sizeof *map; i++)
         if (SDL_GameControllerGetButton_(pad, map[i].sdl)) *b |= map[i].wii;
     int lx = SDL_GameControllerGetAxis_(pad, 0), ly = SDL_GameControllerGetAxis_(pad, 1);
-    if (lx < -16000) *b |= 0x0001;
-    if (lx > 16000) *b |= 0x0002;
-    if (ly > 16000) *b |= 0x0004;
-    if (ly < -16000) *b |= 0x0008;
+    if (ENV("RT_NUNCHUK")) {   /* left stick is the Nunchuk stick, LB = Z, left-stick click = C */
+        if (lx * lx + ly * ly > 3000 * 3000) { g_pad.nc_x = lx / 32767.0f; g_pad.nc_y = ly / 32767.0f; }
+        if (SDL_GameControllerGetButton_(pad, 9)) g_pad.nc_z = 1;
+        if (SDL_GameControllerGetButton_(pad, 7)) g_pad.nc_c = 1;
+    } else {
+        if (lx < -16000) *b |= 0x0001;
+        if (lx > 16000) *b |= 0x0002;
+        if (ly > 16000) *b |= 0x0004;
+        if (ly < -16000) *b |= 0x0008;
+    }
     float rx = SDL_GameControllerGetAxis_(pad, 2) / 32767.0f, ry = SDL_GameControllerGetAxis_(pad, 3) / 32767.0f;
     if (ENV("RT_PADLOG") && (rx != 0 || ry != 0 || SDL_GameControllerGetAxis_(pad, 4) || SDL_GameControllerGetAxis_(pad, 5)))
         fprintf(stderr, "window: pad axes rx %.2f ry %.2f lt %d rt %d ptr %d %.2f %.2f\n", rx, ry, SDL_GameControllerGetAxis_(pad, 4), SDL_GameControllerGetAxis_(pad, 5), pad_ptr_active, pad_px, pad_py);
@@ -153,6 +159,11 @@ void window_poll(void) {
     if (mb & 1) b |= 0x0800;  /* left mouse: A */
     if (k[42]) b |= 0x1000;   /* Backspace: - */
     if (k[11]) b |= 0x8000;   /* H: HOME */
+    /* Nunchuk (RT_NUNCHUK=1): WASD stick, Q = Z, E = C */
+    g_pad.nc_x = (k[7] ? 1.0f : 0) - (k[4] ? 1.0f : 0);
+    g_pad.nc_y = (k[22] ? 1.0f : 0) - (k[26] ? 1.0f : 0);
+    g_pad.nc_z = k[20];
+    g_pad.nc_c = k[8];
     gamepad_poll(&b);
     g_pad.buttons = b;
     static int lmx = -1, lmy = -1;

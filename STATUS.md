@@ -242,4 +242,7 @@ Check in over SSH:
   pointer (mouse takes it back when moved), RT/RB swing, LT throw. Verified with a virtual uinput
   X360 pad (tools/vpad.c): detected, A/B/A+B/d-pad delivered, stick moves the file-select cursor,
   triggers produce the swing/throw accelerometer profiles.
-- Next: Nunchuk extension; more mod hook points.
+- NEW: Nunchuk extension (RT_NUNCHUK=1): extension callback + WPADProbe report FREESTYLE, WPADRead fills
+  the FS status (stick, C/Z). Verified: P1 card shows Remote + Nunchuk; KPAD dev 1, stick (1,0)/(0,1),
+  Z = 0x2000. Keyboard WASD/Q/E, gamepad left stick/LB/L3, RT_INPUT < > ^ v Z C.
+- Next: more mod hook points; Challenge mode play-through.

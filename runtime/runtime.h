@@ -31,6 +31,8 @@ typedef struct {
     float ir_x, ir_y;       /* pointer, -1..1 */
     int ir_valid;
     int swing_t;            /* >0 while a swing gesture plays */
+    float nc_x, nc_y;       /* Nunchuk stick, -1..1 (RT_NUNCHUK=1 attaches one) */
+    int nc_c, nc_z;         /* Nunchuk buttons */
     int gesture;            /* 0 swing, 1 / 2 overhand throw (either sign) */
     float rest_y, rest_z;   /* resting gravity (flat: 0,1; pointing up: 1,0) */
 } HostPad;

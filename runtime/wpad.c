@@ -12,17 +12,20 @@
 HostPad g_pad = {.acc_z = 1.0f, .rest_z = 1.0f, .ir_valid = 1};
 
 static u32 connect_cb[4], ext_cb[4], sampling_cb[4], fmt[4];
-static int announced;
+static int announced, ext_announced;
+static int nunchuk(void) { return ENV("RT_NUNCHUK") != NULL; }
+#define WPAD_DEV_FREESTYLE 1
 
 /* scripted input for testing without a window: RT_INPUT="from-to:KEYS;..." in retrace ticks
  * (60 per second). KEYS: A B 1 2 + - H (home) U D L R (d-pad), S (swing), T / Y (overhand throw,
- * either sign), P / Q (hold pointing up / down), @x,y (point at x,y in -1..1); e.g. "2200-2205:A" */
+ * either sign), P / Q (hold pointing up / down), @x,y (point at x,y in -1..1), Nunchuk (RT_NUNCHUK=1):
+ * < > ^ v stick, Z / C buttons; e.g. "2200-2205:A" */
 static u64 ticks;
 static void scripted_input(void) {
     const char *s = ENV("RT_INPUT");
     if (!s) return;
     u16 b = 0;
-    int swing = 0, pose = 0, ptr = 0;
+    int swing = 0, pose = 0, ptr = 0, nx = 0, ny = 0, nz = 0, ncb = 0;
     float px = 0, py = 0;
     while (*s) {
         unsigned long a = strtoul(s, (char **)&s, 10), z = a;
@@ -49,11 +52,14 @@ static void scripted_input(void) {
             case 'T': swing = 2; break; case 'Y': swing = 3; break;
             default: if (*s >= 'a' && *s <= 'n') swing = 4 + (*s - 'a'); break;   /* probe bursts */
             case 'P': pose = 1; break; case 'Q': pose = -1; break;
+            case '<': nx = -1; break; case '>': nx = 1; break; case '^': ny = -1; break; case 'v': ny = 1; break;
+            case 'Z': nz = 1; break; case 'C': ncb = 1; break;
             }
         }
         if (*s == ';') s++;
     }
     g_pad.buttons = b;
+    g_pad.nc_x = (float)nx; g_pad.nc_y = (float)ny; g_pad.nc_z = nz; g_pad.nc_c = ncb;
     /* pointer, -1..1; without RT_IR it points off-screen so scripts navigate with the d-pad */
     g_pad.ir_valid = ENV("RT_IR") && sscanf(ENV("RT_IR"), "%f,%f", &g_pad.ir_x, &g_pad.ir_y) == 2;
     if (ptr) { g_pad.ir_valid = 1; g_pad.ir_x = px; g_pad.ir_y = py; }
@@ -117,6 +123,9 @@ void wpad_tick(CPU *c) {
         announced = 1;
         if (connect_cb[0])
             guest_call(c, connect_cb[0], 0, 0);   /* chan 0 connected, WPAD_ERR_NONE */
+    } else if (!ext_announced && nunchuk() && ext_cb[0]) {
+        ext_announced = 1;
+        guest_call(c, ext_cb[0], 0, WPAD_DEV_FREESTYLE);   /* Nunchuk plugged in */
     }
     if (sampling_cb[0])
         guest_call(c, sampling_cb[0], 0, 0);
@@ -130,7 +139,7 @@ HLE(WPADProbe) {
     s32 chan = (s32)c->r[3];
     u32 type = c->r[4];
     if (chan != 0) { c->r[3] = (u32)-1; return; }   /* WPAD_ERR_NO_CONTROLLER */
-    if (type) mw32(type, 0);                        /* WPAD_DEV_CORE */
+    if (type) mw32(type, nunchuk() ? WPAD_DEV_FREESTYLE : 0);   /* WPAD_DEV_CORE / FREESTYLE */
     c->r[3] = 0;
 }
 HLE(WPADSetConnectCallback) {
@@ -140,7 +149,7 @@ HLE(WPADSetConnectCallback) {
     if (ch == 0) announced = 0;
     c->r[3] = old;
 }
-HLE(WPADSetExtensionCallback) { s32 ch = (s32)c->r[3] & 3; u32 old = ext_cb[ch]; ext_cb[ch] = c->r[4]; c->r[3] = old; }
+HLE(WPADSetExtensionCallback) { s32 ch = (s32)c->r[3] & 3; u32 old = ext_cb[ch]; ext_cb[ch] = c->r[4]; c->r[3] = old; if (ch == 0) ext_announced = 0; }
 HLE(WPADSetSamplingCallback) { s32 ch = (s32)c->r[3] & 3; u32 old = sampling_cb[ch]; sampling_cb[ch] = c->r[4]; c->r[3] = old; }
 HLE(WPADSetDataFormat) { fmt[c->r[3] & 3] = c->r[4]; c->r[3] = 0; }
 /* WPADGetDataFormat: KPAD only computes acceleration and pointer data for formats that carry them */
@@ -210,9 +219,21 @@ HLE(WPADRead) {
         static int shown; if (!shown++) fprintf(stderr, "pad: game KPADStatus buffer for channel 0 at %08X\n", k);
         float f[8];
         for (int i = 0; i < 8; i++) { u32 v = mr32(k + 0xC + 4 * i); memcpy(&f[i], &v, 4); }
-        fprintf(stderr, "pad t%llu hold %04X acc %.2f %.2f %.2f pos %.3f %.3f dpd_valid %d\n", (unsigned long long)ticks,
-                mr32(k), f[0], f[1], f[2], f[5], f[6], (s8)mr8(k + 0x5E));
+        float sx, sy;
+        { u32 v = mr32(k + 0x60); memcpy(&sx, &v, 4); v = mr32(k + 0x64); memcpy(&sy, &v, 4); }
+        fprintf(stderr, "pad t%llu hold %04X acc %.2f %.2f %.2f pos %.3f %.3f dpd_valid %d dev %d stick %.2f %.2f\n", (unsigned long long)ticks,
+                mr32(k), f[0], f[1], f[2], f[5], f[6], (s8)mr8(k + 0x5E), mr8(k + 0x5C), sx, sy);
     }
-    mw8(st + 0x28, 0);   /* dev: core */
+    u16 btn = g_pad.buttons;
+    if (nunchuk()) {
+        if (g_pad.nc_z) btn |= 0x2000;   /* WPAD_BUTTON_Z */
+        if (g_pad.nc_c) btn |= 0x4000;   /* WPAD_BUTTON_C */
+        mw16(st + 0x0, btn);
+        mw16(st + 0x2A, 0); mw16(st + 0x2C, 0); mw16(st + 0x2E, 100);   /* Nunchuk at rest, 1 g */
+        mw8(st + 0x30, (u8)(s8)(g_pad.nc_x * 100));
+        mw8(st + 0x31, (u8)(s8)(-g_pad.nc_y * 100));   /* stick up is +y */
+        mw8(st + 0x28, WPAD_DEV_FREESTYLE);
+    } else
+        mw8(st + 0x28, 0);   /* dev: core */
     mw8(st + 0x29, 0);   /* err: none */
 }
