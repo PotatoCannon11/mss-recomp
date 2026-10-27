@@ -43,7 +43,7 @@ static _Atomic u32 ring_w, ring_r;   /* monotonic byte counters */
 static _Atomic int gpu_sleeping;
 static pthread_mutex_t gpu_mu = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t gpu_cv = PTHREAD_COND_INITIALIZER;
-static u8 stage[8192];
+static u8 stage[65536];
 static u32 stage_len;
 static int stage_reset;
 
@@ -92,6 +92,14 @@ static void *gpu_main(void *arg) {
             last_poll = now;
         }
         if (r == w) {
+            /* spin a little before sleeping: commands arrive in bursts, and a futex sleep/wake per chunk
+             * cost more than the drawing itself */
+            int got = 0;
+            for (int spin = 0; spin < 500 && !got; spin++) {
+                __builtin_ia32_pause();
+                got = atomic_load_explicit(&ring_w, memory_order_acquire) != r;
+            }
+            if (got) continue;
             atomic_store_explicit(&gpu_sleeping, 1, memory_order_release);
             pthread_mutex_lock(&gpu_mu);
             if (atomic_load_explicit(&ring_w, memory_order_acquire) == r) {
@@ -321,11 +329,103 @@ static void decode_vertex(const u8 *p, const VtxFmt *f, GLVertex *v) {
     }
 }
 
+/* ---- planned decoding: everything about an attribute that is fixed for a primitive (source array,
+ * stride, component format/count, scale, inline size) is resolved once; the per-vertex loop only
+ * reads indices and converts. Formats the plan doesn't cover use decode_vertex. */
+typedef struct {
+    u8 dst;          /* 0 pos, 1 nrm, 2 col0, 3 col1, 4+i tex i */
+    u8 mode, fmt, cnt, insize;
+    const u8 *base;  /* array (indexed modes) */
+    u32 stride;
+    float scale;
+} AttrOp;
+
+static inline float rd1(const u8 *p, int fmt, float sc) {
+    switch (fmt) {
+    case 0: return p[0] * sc;
+    case 1: return (s8)p[0] * sc;
+    case 2: return (u16)(p[0] << 8 | p[1]) * sc;
+    case 3: return (s16)(p[0] << 8 | p[1]) * sc;
+    default: { u32 v = (u32)p[0] << 24 | p[1] << 16 | p[2] << 8 | p[3]; float f; memcpy(&f, &v, 4); return f; }
+    }
+}
+
+static int build_plan(const VtxFmt *f, AttrOp *ops) {
+    static const int col_size[8] = {2, 3, 4, 2, 3, 4, 0, 0};
+    int n = 0;
+#define ARR(i) (MEM + (g_gpu.cp[0xA0 + (i)] & 0x3FFFFFFFu)), (g_gpu.cp[0xB0 + (i)] & 0xFF)
+    if (f->pos) {
+        AttrOp o = {0, (u8)f->pos, (u8)f->pos_fmt, (u8)f->pos_cnt, (u8)(comp_size[f->pos_fmt] * f->pos_cnt), ARR(0), 1.0f / (1 << f->pos_shift)};
+        ops[n++] = o;
+    }
+    if (f->nrm) {
+        if (f->nrm_nbt) return -1;   /* normal/binormal/tangent: generic path */
+        AttrOp o = {1, (u8)f->nrm, (u8)f->nrm_fmt, 3, (u8)(comp_size[f->nrm_fmt] * 3), ARR(1),
+                    f->nrm_fmt == 1 ? 1.0f / 64 : f->nrm_fmt == 3 ? 1.0f / 16384 : 1.0f};
+        ops[n++] = o;
+    }
+    for (int i = 0; i < 2; i++)
+        if (f->col[i]) { AttrOp o = {(u8)(2 + i), (u8)f->col[i], (u8)f->col_fmt[i], 0, (u8)col_size[f->col_fmt[i]], ARR(2 + i), 0}; ops[n++] = o; }
+    for (int i = 0; i < 8; i++)
+        if (f->tex[i]) {
+            int cnt = f->tex_cnt[i] ? 2 : 1;
+            AttrOp o = {(u8)(4 + i), (u8)f->tex[i], (u8)f->tex_fmt[i], (u8)cnt, (u8)(comp_size[f->tex_fmt[i]] * cnt), ARR(4 + i), 1.0f / (1 << f->tex_shift[i])};
+            ops[n++] = o;
+        }
+#undef ARR
+    return n;
+}
+
 struct FillCtx { const u8 *p; const VtxFmt *f; };
 static void fill_vertices(GLVertex *out, u32 n, void *ctx) {
     struct FillCtx *fc = ctx;
+    const VtxFmt *f = fc->f;
     const u8 *q = fc->p;
-    for (u32 k = 0; k < n; k++, q += fc->f->size) decode_vertex(q, fc->f, &out[k]);
+    AttrOp ops[12];
+    int nops = build_plan(f, ops);
+    if (nops < 0) {
+        for (u32 k = 0; k < n; k++, q += f->size) decode_vertex(q, f, &out[k]);
+        return;
+    }
+    /* what every vertex of this primitive shares: matrix-index defaults, absent attributes */
+    GLVertex tmpl;
+    memset(&tmpl, 0, sizeof tmpl);
+    u32 m30 = g_gpu.cp[0x30], m40 = g_gpu.cp[0x40];
+    tmpl.mtx[0] = (u8)(m30 & 63);
+    for (int i = 0; i < 8; i++) tmpl.mtx[4 + i] = (u8)(i < 4 ? (m30 >> (6 + 6 * i)) & 63 : (m40 >> (6 * (i - 4))) & 63);
+    if (!f->col[0]) memset(tmpl.col0, 255, 4);
+    if (!f->col[1]) memset(tmpl.col1, 255, 4);
+    int has_mtx = f->pnmtx;
+    for (int i = 0; i < 8; i++) has_mtx |= f->texmtx[i];
+    for (u32 k = 0; k < n; k++, q += f->size) {
+        GLVertex *v = &out[k];
+        *v = tmpl;
+        const u8 *p = q;
+        if (has_mtx) {
+            if (f->pnmtx) v->mtx[0] = *p++;
+            for (int i = 0; i < 8; i++) if (f->texmtx[i]) v->mtx[4 + i] = *p++;
+        }
+        for (int j = 0; j < nops; j++) {
+            const AttrOp *o = &ops[j];
+            const u8 *src;
+            if (o->mode == 1) { src = p; p += o->insize; }
+            else if (o->mode == 3) { src = o->base + (u32)(p[0] << 8 | p[1]) * o->stride; p += 2; }
+            else { src = o->base + (u32)p[0] * o->stride; p += 1; }
+            if (o->dst == 2 || o->dst == 3) { rd_color8(src, o->fmt, o->dst == 2 ? v->col0 : v->col1); continue; }
+            float *d = o->dst == 0 ? v->pos : o->dst == 1 ? v->nrm : v->tex[o->dst - 4];
+            int cs = comp_size[o->fmt];
+            switch (o->fmt) {   /* the common component types without the per-component switch */
+            case 3:
+                for (int c = 0; c < o->cnt; c++) d[c] = (s16)(src[2 * c] << 8 | src[2 * c + 1]) * o->scale;
+                break;
+            case 4:
+                for (int c = 0; c < o->cnt; c++) { u32 w = (u32)src[4 * c] << 24 | src[4 * c + 1] << 16 | src[4 * c + 2] << 8 | src[4 * c + 3]; memcpy(&d[c], &w, 4); }
+                break;
+            default:
+                for (int c = 0; c < o->cnt; c++) d[c] = rd1(src + c * cs, o->fmt, o->scale);
+            }
+        }
+    }
 }
 
 /* ---------------------------------------------------------------- registers */
@@ -463,6 +563,17 @@ static u32 run(const u8 *p, u32 len, int depth) {
             if (i + 3 + n * f.size > len) { run_need = i + 3 + n * f.size; break; }
             struct FillCtx fc = {p + i + 3, &f};
             gpu_stat_verts[depth > 0][f.pos >= 2] += n;
+            if (ENV("RT_VFMTSTAT")) {   /* debug: which vertex formats carry the volume */
+                static struct { u32 k[5]; u64 n; } tab[64];
+                static u64 calls;
+                u32 key[5] = {g_gpu.cp[0x50], g_gpu.cp[0x60], g_gpu.cp[0x70 + vat], g_gpu.cp[0x80 + vat], g_gpu.cp[0x90 + vat]};
+                int j;
+                for (j = 0; j < 64 && tab[j].n && memcmp(tab[j].k, key, sizeof key); j++) ;
+                if (j < 64) { memcpy(tab[j].k, key, sizeof key); tab[j].n += n; }
+                if (++calls % 2000000 == 0)
+                    for (j = 0; j < 64 && tab[j].n; j++)
+                        if (tab[j].n > 200000) fprintf(stderr, "vfmt %08X %08X %08X %08X %08X: %llu verts\n", tab[j].k[0], tab[j].k[1], tab[j].k[2], tab[j].k[3], tab[j].k[4], (unsigned long long)tab[j].n);
+            }
             gfx_draw(prim, n, fill_vertices, &fc);
             g_gpu.prims++;
             i += 3 + n * f.size; continue;
