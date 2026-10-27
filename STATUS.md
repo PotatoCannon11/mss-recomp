@@ -211,5 +211,8 @@ Check in over SSH:
 - Live resize (internal resolution follows window height), RT_FULLSCREEN=1, RT_ASPECT=W:H, RT_ASPECT_OFF.
 - Verified 21:9, 32:9, 4:3, 1:1: matches great at all; menus keep proportions (at extremes their 2D
   backgrounds/skybox end, showing bars/edges - nothing authored there).
-- Next: extend menu backgrounds at extreme aspects (stretch full-canvas background quads), Challenge mode,
-  baserunning input.
+- Menu backdrops fill any shape: screen-parallel 4-vertex quads spanning the full width (height when
+  taller) are stretched rather than kept in proportion (checked on the CPU per draw). 32:9 / 4:3 menus
+  now fill; matches unaffected (21:9 avg 59.8 fps). Only real 3D scenery can still end (stage-select
+  island skybox at 32:9).
+- Next: Challenge mode, baserunning input.

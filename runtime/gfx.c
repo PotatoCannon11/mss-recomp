@@ -743,6 +743,33 @@ static int projection_mode(const BatchSig *sig) {
     }
     return 1;
 }
+/* a backdrop: a screen-parallel quad spanning the whole screen width (or height, when taller). Those
+ * are stretched to the surface instead of kept in proportion, so menu backgrounds fill any shape */
+static int is_backdrop(u32 n, VertexFill fill, void *ctx) {
+    if (n != 4) return 0;
+    GLVertex v[4];
+    fill(v, 4, ctx);
+    int ortho = g_gpu.xfreg[0x26] & 1;
+    float p0 = u2f(g_gpu.xfreg[0x20]), p1 = u2f(g_gpu.xfreg[0x21]), p2 = u2f(g_gpu.xfreg[0x22]), p3 = u2f(g_gpu.xfreg[0x23]);
+    float xmin = 1e9f, xmax = -1e9f, ymin = 1e9f, ymax = -1e9f, z0 = 0;
+    for (int i = 0; i < 4; i++) {
+        u32 r = v[i].mtx[0] * 4;
+        float e[3];
+        for (int k = 0; k < 3; k++)
+            e[k] = u2f(g_gpu.xfmem[r + 4 * k]) * v[i].pos[0] + u2f(g_gpu.xfmem[r + 4 * k + 1]) * v[i].pos[1] +
+                   u2f(g_gpu.xfmem[r + 4 * k + 2]) * v[i].pos[2] + u2f(g_gpu.xfmem[r + 4 * k + 3]);
+        if (i == 0) z0 = e[2];
+        else if (fabsf(e[2] - z0) > 0.01f * fabsf(z0) + 1e-4f) return 0;   /* not facing the screen */
+        float w = ortho ? 1.0f : -e[2];
+        if (!ortho && w <= 0) return 0;
+        float x = ortho ? p0 * e[0] + p1 : (p0 * e[0] + p1 * e[2]) / w;
+        float y = ortho ? p2 * e[1] + p3 : (p2 * e[1] + p3 * e[2]) / w;
+        if (x < xmin) xmin = x; if (x > xmax) xmax = x;
+        if (y < ymin) ymin = y; if (y > ymax) ymax = y;
+    }
+    return g_aspect_k > 1 ? (xmin <= -0.97f && xmax >= 0.97f) : (ymin <= -0.97f && ymax >= 0.97f);
+}
+
 static void projection_adapt(Uniforms *u) {
     float kx = g_aspect_k > 1 ? 1.0f / g_aspect_k : 1.0f, ky = g_aspect_k < 1 ? g_aspect_k : 1.0f;
     u->proj[0][0] *= kx;   /* x scale */
@@ -824,6 +851,7 @@ void gfx_draw(int prim, u32 n, VertexFill fill, void *ctx) {
     sig.st[0] = g_gpu.bp[0x00] & (3 << 14); sig.st[1] = g_gpu.bp[0x40]; sig.st[2] = g_gpu.bp[0x41];
     sig.st[3] = g_gpu.bp[0x20]; sig.st[4] = g_gpu.bp[0x21];
     sig.adapt = projection_mode(&sig);
+    if (sig.adapt && is_backdrop(n, fill, ctx)) sig.adapt = 0;
     if (ENV("RT_ASPECT_DEBUG") && (long)g_gpu.frames >= atol(ENV("RT_ASPECT_DEBUG")) && (long)g_gpu.frames < atol(ENV("RT_ASPECT_DEBUG")) + 2) {
         fprintf(stderr, "adraw mode %d n %u vp %.0fx%.0f ortho %u pw %.1f ph %.1f tex:", sig.adapt, n, fabsf(u2f(g_gpu.xfreg[0x1A])) * 2, fabsf(u2f(g_gpu.xfreg[0x1B])) * 2,
                 g_gpu.xfreg[0x26] & 1, 2.0f / fabsf(u2f(g_gpu.xfreg[0x20])), 2.0f / fabsf(u2f(g_gpu.xfreg[0x22])));
