@@ -245,4 +245,7 @@ Check in over SSH:
 - NEW: Nunchuk extension (RT_NUNCHUK=1): extension callback + WPADProbe report FREESTYLE, WPADRead fills
   the FS status (stick, C/Z). Verified: P1 card shows Remote + Nunchuk; KPAD dev 1, stick (1,0)/(0,1),
   Z = 0x2000. Keyboard WASD/Q/E, gamepad left stick/LB/L3, RT_INPUT < > ^ v Z C.
-- Next: more mod hook points; Challenge mode play-through.
+- Challenge mode plays: point at a stage on the map and press A -> loads Mario Stadium, Lakitu
+  dialogue, Luigi recruited ("Congratulations! You have a new teammate!"), free-roam walking (pointer +
+  hold A) with the team bar and coin counter. build/challenge_freeroam.png
+- Next: more mod hook points; longer Challenge play (first in-stage match).
