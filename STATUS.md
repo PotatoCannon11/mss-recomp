@@ -249,3 +249,9 @@ Check in over SSH:
   dialogue, Luigi recruited ("Congratulations! You have a new teammate!"), free-roam walking (pointer +
   hold A) with the team bar and coin counter. build/challenge_freeroam.png
 - Next: more mod hook points; longer Challenge play (first in-stage match).
+
+## 2026-10-27
+- Mod API v2: on_input (rewrite buttons/accelerometer/pointer/Nunchuk each tick before the game reads
+  them) and on_present (GPU thread, after each frame). Example mods/autoswing.c: 2 = one-button swing.
+  Verified in RT_PADLOG: the 2 press is hidden and the swing profile reaches KPAD's accelerometer.
+- Next: longer Challenge play (first in-stage match); an overlay example using on_present.

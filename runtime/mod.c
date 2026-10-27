@@ -34,6 +34,29 @@ void mod_frame(void) {
     for (int i = 0; i < nframes; i++) frames[i].fn(frames[i].user);
 }
 
+#define MAX_CB 32
+static struct { MssInputFn fn; void *user; } inputs[MAX_CB];
+static int ninputs;
+static struct { MssPresentFn fn; void *user; } presents[MAX_CB];
+static int npresents;
+
+/* game thread, once per tick after the host input is gathered */
+void mod_input(void) {
+    if (!ninputs) return;
+    MssPad p = {g_pad.buttons, g_pad.acc_x, g_pad.acc_y, g_pad.acc_z, g_pad.ir_x, g_pad.ir_y, g_pad.ir_valid,
+                g_pad.nc_x, g_pad.nc_y, g_pad.nc_c, g_pad.nc_z};
+    for (int i = 0; i < ninputs; i++) inputs[i].fn(&p, inputs[i].user);
+    g_pad.buttons = p.buttons; g_pad.acc_x = p.acc_x; g_pad.acc_y = p.acc_y; g_pad.acc_z = p.acc_z;
+    g_pad.ir_x = p.ir_x; g_pad.ir_y = p.ir_y; g_pad.ir_valid = p.ir_valid;
+    g_pad.nc_x = p.nc_x; g_pad.nc_y = p.nc_y; g_pad.nc_c = p.nc_c; g_pad.nc_z = p.nc_z;
+}
+/* GPU thread, after a frame was presented */
+void mod_present(unsigned long long frame, int w, int h) {
+    for (int i = 0; i < npresents; i++) presents[i].fn(frame, w, h, presents[i].user);
+}
+static void a_on_input(MssInputFn fn, void *user) { if (ninputs < MAX_CB) { inputs[ninputs].fn = fn; inputs[ninputs].user = user; ninputs++; } }
+static void a_on_present(MssPresentFn fn, void *user) { if (npresents < MAX_CB) { presents[npresents].fn = fn; presents[npresents].user = user; npresents++; } }
+
 static u32 a_r32(u32 a) { return mr32(a); }
 static u16 a_r16(u32 a) { return mr16(a); }
 static u8 a_r8(u32 a) { return mr8(a); }
@@ -83,6 +106,7 @@ static void a_log(const char *fmt, ...) {
 static const MssApi api = {
     MSS_MOD_API_VERSION, NULL, a_r32, a_r16, a_r8, a_rf, a_w32, a_w16, a_w8, a_wf,
     a_sym, fn_name, a_hook, a_call_original, a_call, a_on_frame, a_frame, a_log,
+    a_on_input, a_on_present,
 };
 
 static void load_one(const char *path) {

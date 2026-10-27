@@ -119,6 +119,8 @@ void wpad_tick(CPU *c) {
     scripted_input();
     g_pad.acc_x = 0; g_pad.acc_y = g_pad.rest_y; g_pad.acc_z = g_pad.rest_z;
     swing_step();
+    void mod_input(void);
+    mod_input();
     if (!announced) {
         announced = 1;
         if (connect_cb[0])

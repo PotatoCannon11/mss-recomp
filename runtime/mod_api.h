@@ -14,10 +14,22 @@
 #pragma once
 #include "cpu.h"
 
-#define MSS_MOD_API_VERSION 1
+#define MSS_MOD_API_VERSION 2
 
 typedef int (*MssHook)(CPU *c, void *user);
 typedef void (*MssFrameFn)(void *user);
+
+/* the emulated Wii Remote as the game will read it this tick; input callbacks may change it */
+typedef struct MssPad {
+    u16 buttons;              /* WPAD_BUTTON_* bits (A 0x0800, B 0x0400, 1 0x0200, 2 0x0100, + 0x0010, ...) */
+    float acc_x, acc_y, acc_z;   /* accelerometer, g */
+    float ir_x, ir_y;         /* pointer, -1..1 */
+    int ir_valid;
+    float nc_x, nc_y;         /* Nunchuk stick (RT_NUNCHUK) */
+    int nc_c, nc_z;
+} MssPad;
+typedef void (*MssInputFn)(MssPad *pad, void *user);
+typedef void (*MssPresentFn)(unsigned long long frame, int width, int height, void *user);
 
 typedef struct MssApi {
     int version;
@@ -38,4 +50,7 @@ typedef struct MssApi {
     void (*on_frame)(MssFrameFn fn, void *user);
     unsigned long long (*frame)(void);         /* retrace counter */
     void (*log)(const char *fmt, ...);
+    /* v2 */
+    void (*on_input)(MssInputFn fn, void *user);       /* game thread, every tick, before the game reads the pad */
+    void (*on_present)(MssPresentFn fn, void *user);   /* GPU thread, after each frame is shown (GL context current) */
 } MssApi;
