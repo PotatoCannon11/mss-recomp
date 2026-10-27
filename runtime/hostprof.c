@@ -28,8 +28,13 @@ static void on_prof(int sig, siginfo_t *si, void *ctx) {
     if (min_draws < 0) min_draws = ENV("RT_HOSTPROF_DRAWS") ? atol(ENV("RT_HOSTPROF_DRAWS")) : 0;
     if ((long)g_gpu.last_frame_draws < min_draws) return;
     if (nsamples < MAXS) {
+#if defined(__x86_64__)
         callers[nsamples] = *(unsigned long *)uc->uc_mcontext.gregs[REG_RSP];
         samples[nsamples++] = (unsigned long)uc->uc_mcontext.gregs[REG_RIP];
+#elif defined(__aarch64__)
+        callers[nsamples] = (unsigned long)uc->uc_mcontext.regs[30];   /* a leaf's return address is in lr */
+        samples[nsamples++] = (unsigned long)uc->uc_mcontext.pc;
+#endif
     }
 }
 

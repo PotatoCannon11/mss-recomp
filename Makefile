@@ -7,7 +7,7 @@ CC = gcc
 OPT ?= -O2
 EXTRA ?=
 # `make EXTRA=-DTRACE` builds the debug variant (function tracing, profiles, coverage, call logs)
-CFLAGS = $(OPT) -g0 -fno-strict-aliasing -fwrapv -ffp-contract=off -w -Iruntime -Ibuild/gen $(EXTRA)
+CFLAGS = $(OPT) -g0 -fsigned-char -fno-strict-aliasing -fwrapv -ffp-contract=off -w -Iruntime -Ibuild/gen $(EXTRA)
 
 GEN_SRC = $(wildcard build/gen/gen_*.c)
 GEN_OBJ = $(GEN_SRC:build/gen/%.c=build/obj/%.o)
@@ -15,7 +15,7 @@ RT_SRC = $(wildcard runtime/*.c)
 RT_OBJ = $(RT_SRC:runtime/%.c=build/obj/rt_%.o)
 
 build/mss: $(GEN_OBJ) $(RT_OBJ) build/obj/functab.o
-	$(CC) -o $@ $^ -lm -lpthread -lEGL -lGL -ldl
+	$(CC) -o $@ $^ -lm -lpthread -lEGL -lGL -ldl -lz
 
 build/obj/%.o: build/gen/%.c runtime/cpu.h | build/obj
 	$(CC) $(CFLAGS) -c $< -o $@

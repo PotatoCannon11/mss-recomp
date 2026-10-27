@@ -334,6 +334,9 @@ void audio_frame_done(void) {}
 
 /* debug (thread dump): AX voices on the priority stacks, CPU-side and DSP-side state */
 void ax_dump(void) {
+#if !defined(DATA___AXNumVoices) || !defined(DATA___AXPB) || !defined(DATA___AXStackHead)
+    fprintf(stderr, "---- AX: voice dump unavailable (AX data symbols not in symbols.txt)\n");
+#else
     fprintf(stderr, "---- AX: %u voices serviced last frame, PB array %08X\n", mr32(DATA___AXNumVoices), mr32(DATA___AXPB));
     for (int prio = 31; prio >= 0; prio--)
         for (u32 v = mr32(DATA___AXStackHead + 4 * prio), n = 0; v && n < 96; v = mr32(v), n++) {
@@ -342,4 +345,5 @@ void ax_dump(void) {
                     mr32(v + 0x1C), mr16(v + 0x28 + 0x10), mr16(v + 0x28 + 0x70),
                     (u32)mr16(v + 0x28 + 0x7A) << 16 | mr16(v + 0x28 + 0x7C), r16(pb + 0x10));
         }
+#endif
 }

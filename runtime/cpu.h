@@ -1,7 +1,10 @@
 /* Guest CPU state and memory access for statically recompiled Gekko (PowerPC 750CL) code. */
 #pragma once
+#if defined(__x86_64__)
 #include <emmintrin.h>
+#endif
 #include <math.h>
+#include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -102,7 +105,11 @@ static inline double fctiw(double d) {
     if (isnan(d)) i = INT32_MIN;
     else if (d >= 2147483647.0) i = INT32_MAX;
     else if (d <= -2147483648.0) i = INT32_MIN;
+#if defined(__x86_64__)
     else i = _mm_cvtsd_si32(_mm_set_sd(d));   /* current rounding mode (nearest), inline */
+#else
+    else i = (s32)lrint(d);                   /* current rounding mode (nearest) */
+#endif
     return u2d(0xFFF8000000000000ull | (u32)i);
 }
 static inline double fres(double d) { return rs(1.0 / d); }

@@ -359,7 +359,7 @@ static GLuint get_prog(const PipeKey *k) {
 static u8 tmem_tlut[1 << 20];   /* TMEM: palettes are loaded here (BP 0x64/0x65), then indexed */
 static u64 tlut_gen;            /* bumped whenever palette contents change, so cached lookups recheck */
 
-typedef struct { u32 addr, fmt, w, h, tlut, hash; GLuint tex; int efb; u32 mode0; int next; u16 src_w, src_h; } TexEntry;   /* src_*: EFB area an EFB copy came from */
+typedef struct { u32 addr, fmt, w, h, tlut, hash; GLuint tex; int efb; u32 mode0; int next; u16 src_w, src_h; u64 used; u8 mips, hires; } TexEntry;   /* used: last frame bound; mips: has a mip chain; hires: replacement texture */   /* src_*: EFB area an EFB copy came from */
 static TexEntry texcache[4096];
 static u64 stat_tex_new, stat_tex_bytes, stat_verts, stat_brk[8];   /* RT_FPS counters */
 static int ntex;
@@ -485,6 +485,11 @@ static void decode_tex(const u8 *p, int fmt, int w, int h, u32 tlut_off, int tlu
 static GLuint tex_bound[8];   /* texture currently bound per unit (cleared when others bind) */
 static void invalidate_gl_caches(void) { memset(tex_bound, 0, sizeof tex_bound); g_gpu.state_epoch++; }
 
+void gfx_batch_flush(void);
+int texpack_active(void);
+u64 texpack_hash(const u8 *data, u32 n, const u8 *pal, u32 pal_n, u32 pal_fmt);
+void texpack_dump(u64 hash, int w, int h, int fmt, const u8 *rgba);
+u8 *texpack_replace(u64 hash, int *w, int *h);
 static void bind_texture(int map) {
     int bank = map < 4 ? 0 : 0x20, i = map & 3;
     u32 mode0 = g_gpu.bp[0x80 + bank + i], img0 = g_gpu.bp[0x88 + bank + i], img3 = g_gpu.bp[0x94 + bank + i];
@@ -511,39 +516,54 @@ static void bind_texture(int map) {
     e = tex_find_efb(addr);
     if (!e) {
         if (!bytes || (addr & 0x3FFFFFFFu) + bytes > 0x14000000u) { glBindTexture(GL_TEXTURE_2D, 0); return; }
-        u32 hsh = tex_hash(MEM + addr, bytes) ^ (fmt >= 8 && fmt <= 10 ? tex_hash(tmem_tlut + tlut_off, fmt == 8 ? 32 : 512) * 31 : 0);
+        int pal = fmt >= 8 && fmt <= 10;
+        u32 hsh = tex_hash(MEM + addr, bytes) ^ (pal ? (tex_hash(tmem_tlut + tlut_off, fmt == 8 ? 32 : 512) ^ tlut_fmt) * 31 : 0);
+        /* textures rewritten in place (animated or streamed) keep at most TEX_VARIANTS versions per
+         * address and shape: the least recently used one is overwritten, so the cache and these lookup
+         * chains stay short however long the game runs. Palette textures get more: one image is often
+         * drawn with many palettes (team colours), each its own decoded version */
+        const int TEX_VARIANTS = pal ? 64 : 4;
+        TexEntry *lru = NULL;
+        int nvar = 0;
         for (int i = tex_head[tex_slot(addr)]; i && !e; i = texcache[i - 1].next) {
             TexEntry *t = &texcache[i - 1];
-            if (!t->efb && t->addr == addr && t->w == (u32)w && t->h == (u32)h && t->fmt == (u32)fmt && t->hash == hsh) e = t;
+            if (t->efb || t->addr != addr || t->w != (u32)w || t->h != (u32)h || t->fmt != (u32)fmt) continue;
+            if (t->hash == hsh) e = t;
+            else { nvar++; if (!lru || t->used < lru->used) lru = t; }
         }
         if (!e) {
-            e = tex_add(addr);
-            e->fmt = (u32)fmt; e->w = (u32)w; e->h = (u32)h; e->tlut = tlut_off; e->hash = hsh;
+            int reuse = nvar >= TEX_VARIANTS;
+            if (reuse) { e = lru; gfx_batch_flush(); }   /* queued draws may still sample its old contents */
+            else { e = tex_add(addr); e->fmt = (u32)fmt; e->w = (u32)w; e->h = (u32)h; }
+            e->tlut = tlut_off; e->hash = hsh;
             if (ENV("RT_SHADERS"))
                 fprintf(stderr, "texture %08X fmt %d %dx%d tlut %05X/%d\n", addr, fmt, w, h, tlut_off, tlut_fmt);
             u8 *rgba = calloc(4, (size_t)w * h);
             stat_tex_new++;
             stat_tex_bytes += (u64)w * h * 4;
             decode_tex(MEM + addr, fmt, w, h, tlut_off, tlut_fmt, rgba);
-            const char *td = ENV("RT_TEXDUMP");
-            if (td) {
-                char path[512];
-                snprintf(path, sizeof path, "%s/tex_%08X_f%d_%dx%d.ppm", td, addr, fmt, w, h);
-                FILE *tf = fopen(path, "wb");
-                if (tf) {
-                    fprintf(tf, "P6\n%d %d\n255\n", w, h);
-                    for (int i = 0; i < w * h; i++) fwrite(rgba + 4 * i, 1, 3, tf);
-                    fclose(tf);
-                }
+            /* custom textures (texpack.c): dump this one and/or swap in a replacement; textures being
+             * rewritten all the time (movies, effects) aren't dumped */
+            int uw = w, uh = h;
+            e->hires = 0;
+            if (texpack_active()) {
+                u64 th = texpack_hash(MEM + addr, bytes, pal ? tmem_tlut + tlut_off : NULL, pal ? (fmt == 8 ? 32 : 512) : 0, tlut_fmt);
+                if (!reuse) texpack_dump(th, w, h, fmt, rgba);
+                u8 *hi = texpack_replace(th, &uw, &uh);
+                if (hi) { free(rgba); rgba = hi; e->hires = 1; }
             }
-            glGenTextures(1, &e->tex);
+            if (!reuse) glGenTextures(1, &e->tex);
             glBindTexture(GL_TEXTURE_2D, e->tex);
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, uw, uh, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+            glGenerateMipmap(GL_TEXTURE_2D);   /* for minified draws (distant players, high internal resolution) */
+            e->mips = 1;
+            e->mode0 = 0;                      /* (re)apply sampler parameters */
             free(rgba);
         }
     }
     glBindTexture(GL_TEXTURE_2D, e->tex);
     bound[map] = e->tex;
+    e->used = g_gpu.frames;
     *fe = (struct Fast){img0, img3, tlutr, mode0, g_gpu.frames, g_gpu.efb_gen, tlut_gen, e};
     if (e->mode0 == mode0 + 1) return;
 params:
@@ -553,9 +573,21 @@ params:
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrap[mode0 & 3]);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrap[(mode0 >> 2) & 3]);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, (mode0 >> 4) & 1 ? GL_LINEAR : GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, ((mode0 >> 5) & 7) == 0 ? GL_NEAREST : GL_LINEAR);
+    /* GX min filter: 0 near, 1 linear, 2-5 mipmapped; replacements are always mipmapped (they're
+     * minified far more than the originals) */
+    int minf = (mode0 >> 5) & 7, mip = e->mips && (minf >= 2 || e->hires);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, mip ? GL_LINEAR_MIPMAP_LINEAR : minf == 0 ? GL_NEAREST : GL_LINEAR);
+    static float aniso = -1;
+    if (aniso < 0) {
+        aniso = ENV("RT_ANISO") ? (float)atof(ENV("RT_ANISO")) : 16.0f;   /* RT_ANISO=0 turns it off */
+        float mx = 1;
+        glGetFloatv(0x84FF, &mx);   /* GL_MAX_TEXTURE_MAX_ANISOTROPY */
+        if (aniso > mx) aniso = mx;
+    }
+    if (aniso >= 1) glTexParameterf(GL_TEXTURE_2D, 0x84FE, mip ? aniso : 1.0f);   /* GL_TEXTURE_MAX_ANISOTROPY */
 }
 
+void gfx_batch_flush(void);
 void gfx_load_tlut(void) {
     gfx_batch_flush();
     u32 src = (g_gpu.bp[0x64] & 0xFFFFFF) << 5;
@@ -1131,7 +1163,7 @@ void gfx_present(int sx, int sy, int sw, int sh) {
         if (f0) fprintf(stderr, "fps %.1f (frame %llu, %llu draws, gpu thread %.0f%% busy)\n", (g_gpu.frames - f0) / secs,
                         (unsigned long long)g_gpu.frames, (unsigned long long)g_gpu.last_frame_draws, (gpu_busy_ns - busy0) / 1e7 / secs);
         busy0 = gpu_busy_ns;
-        if (f0) fprintf(stderr, "    new textures %llu (%.1f MB decoded), %llu vertices\n", (unsigned long long)stat_tex_new, stat_tex_bytes / 1e6, (unsigned long long)stat_verts);
+        if (f0) fprintf(stderr, "    new textures %llu (%.1f MB decoded), %llu vertices; cache %d textures, %d programs\n", (unsigned long long)stat_tex_new, stat_tex_bytes / 1e6, (unsigned long long)stat_verts, ntex, nprogs);
         if (f0) fprintf(stderr, "    batch breaks: lines/points %llu, uniforms %llu, first %llu, program %llu, textures %llu, state %llu, full %llu (merged %llu)\n",
                         (unsigned long long)stat_brk[1], (unsigned long long)stat_brk[2], (unsigned long long)stat_brk[3], (unsigned long long)stat_brk[4],
                         (unsigned long long)stat_brk[5], (unsigned long long)stat_brk[6], (unsigned long long)stat_brk[7], (unsigned long long)stat_brk[0]);

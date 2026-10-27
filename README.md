@@ -32,6 +32,10 @@ RT or RB = swing (and the pitching pull-up), LT = throw. The mouse takes the poi
 automatically, with a Nunchuk if plugged in: buttons and real motion go straight to the game. There's no
 sensor bar, so point with the mouse. Pair once: hold 1+2 (or press the red sync button) and run
 `bluetoothctl` -> `scan on` -> `connect <address of "Nintendo RVL-CNT-01">`. `RT_NO_WIIMOTE=1` ignores it.
+**Multiplayer:** each Wii Remote and gamepad takes the next free player slot when it connects (first =
+player 1, next = player 2, up to 4) and keeps it until it disconnects; the keyboard and mouse always
+control player 1. Remotes light their matching player LED if allowed by
+`echo 'SUBSYSTEM=="leds", KERNEL=="*057E:0306*", RUN+="/bin/chmod 666 /sys%p/brightness"' | sudo tee /etc/udev/rules.d/71-wiimote-leds.rules`.
 `RT_NUNCHUK=1` attaches a Nunchuk (the game's Wii Remote + Nunchuk control style): WASD / left stick =
 stick, Q / LB = Z, E / left-stick click = C.
 
@@ -43,6 +47,25 @@ Internal resolution follows the window height (or `RT_SCALE=N` x the console's 5
 
 Debug knobs: `RT_TRACE`, `RT_HLELOG`, `RT_GFXLOG`, `RT_DUMP_AFTER=<s>` (thread dump),
 `RT_DETERMINISTIC` (virtual time, reproducible runs), `tools/hang.sh <s>` (guest stack of a hang).
+
+## Saves
+
+`tools/save.py import <source>` installs a save from a Wii SD-card export (`data.bin`), a Dolphin save
+folder or user directory, a plain folder with `gamedata`/`banner.bin`, or a `.zip` of any of these.
+With no source it takes Dolphin's save if it finds one. The current save is backed up first
+(`~/.local/share/mss-recomp/save-backups`); `tools/save.py list`, `backup` and `restore [name]` manage them.
+Quit the game before importing.
+
+## HD textures
+
+`run.sh` saves each texture the game shows, once, to `~/.local/share/mss-recomp/texdump/RMBE01`
+(`RT_TEXDUMP=0` turns it off). `./upscale.sh` runs Real-ESRGAN (x4plus, CPU) over everything dumped that
+isn't upscaled yet and writes `~/.local/share/mss-recomp/textures/RMBE01`, which the game loads at
+start-up (`RT_TEXPACK=<dir>` for another pack, `RT_TEXPACK=0` for none). Files are named
+`tex1_<w>x<h>_<hash>_<fmt>.png` by content, so hand-made replacements work too (8-bit RGB/RGBA PNG, any
+size). The upscaler needs a venv with torch, numpy and pillow at `~/.local/share/mss-recomp/upscaler-venv`
+and the model at `~/.local/share/mss-recomp/upscaler/RealESRGAN_x4plus.pth`. Textures are mipmapped with
+16x anisotropic filtering (`RT_ANISO=0` turns that off).
 
 ## Mods
 

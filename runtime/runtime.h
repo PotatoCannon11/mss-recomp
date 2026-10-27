@@ -24,7 +24,9 @@ void guest_call(CPU *c, u32 fn, u32 a0, u32 a1);
 void rt_set_dec(u32 v);
 u32 rt_get_dec(void);
 
-/* host input state for the Wii Remote on channel 0 (filled by the frontend) */
+/* host input state for each Wii Remote channel (filled by the frontend; keyboard and mouse drive
+ * channel 0, gamepads and real remotes the channel they claimed) */
+#define MAX_PADS 4
 typedef struct {
     u16 buttons;            /* WPAD_BUTTON_* bits */
     float acc_x, acc_y, acc_z; /* g */
@@ -46,14 +48,19 @@ typedef struct {
     float nc_x, nc_y;
     int nc_c, nc_z;
 } WiimoteState;
-extern WiimoteState g_wm;
+extern WiimoteState g_wm[MAX_PADS];   /* indexed by WPAD channel */
 void wiimote_poll(void);
 extern int g_widescreen;
 extern float g_aspect_k;               /* surface aspect / game reference aspect */
 void aspect_set_surface(int w, int h);   /* SYSCONF aspect is 16:9 (default; RT_43=1 for 4:3) */
-void wpad_start_swing(void);
-void wpad_start_gesture(int g);   /* 0 swing, 1 / 2 throw */
-extern HostPad g_pad;
+void wpad_start_swing(void);      /* channel 0 */
+void wpad_start_gesture(int g);   /* channel 0: 0 swing, 1 / 2 throw */
+void wpad_start_gesture_ch(int ch, int g);
+extern HostPad g_pads[MAX_PADS];
+#define g_pad g_pads[0]
+/* WPAD channels (players) for host controllers: the lowest free one, -1 if all four are taken */
+int input_claim_channel(void);
+void input_release_channel(int ch);
 void wpad_tick(CPU *c);
 void rt_timer_start(void);
 void ios_init(void);

@@ -487,9 +487,16 @@ static void on_segv(int sig, siginfo_t *si, void *uc) {
         fprintf(stderr, "host fault (signal %d) at %p\n", sig, si->si_addr);
     /* where in the host code: the faulting instruction, then the native call chain */
     extern char __executable_start;
+#if defined(__x86_64__)
     greg_t *g = ((ucontext_t *)uc)->uc_mcontext.gregs;
-    fprintf(stderr, "host rip %llx rsp %llx (binary base %p; resolve with addr2line -e build/mss -f <rip-base>)\n",
-            (unsigned long long)g[REG_RIP], (unsigned long long)g[REG_RSP], (void *)&__executable_start);
+    unsigned long long pc = g[REG_RIP], sp = g[REG_RSP];
+#elif defined(__aarch64__)
+    unsigned long long pc = ((ucontext_t *)uc)->uc_mcontext.pc, sp = ((ucontext_t *)uc)->uc_mcontext.sp;
+#else
+    unsigned long long pc = 0, sp = 0;
+#endif
+    fprintf(stderr, "host pc %llx sp %llx (binary base %p; resolve with addr2line -e build/mss -f <pc-base>)\n",
+            pc, sp, (void *)&__executable_start);
     void *bt[32];
     int n = backtrace(bt, 32);
     backtrace_symbols_fd(bt, n, 2);

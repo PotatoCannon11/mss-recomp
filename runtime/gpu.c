@@ -97,7 +97,11 @@ static void *gpu_main(void *arg) {
              * cost more than the drawing itself */
             int got = 0;
             for (int spin = 0; spin < 500 && !got; spin++) {
+#if defined(__x86_64__)
                 __builtin_ia32_pause();
+#elif defined(__aarch64__)
+                __asm__ volatile("yield");
+#endif
                 got = atomic_load_explicit(&ring_w, memory_order_acquire) != r;
             }
             if (got) continue;

@@ -25,6 +25,7 @@ static void record(unsigned long rip, u32 a) {
     if (nhits < MAXHIT) hits[nhits++] = (typeof(hits[0])){rip, a, 1};
 }
 
+#if defined(__x86_64__)
 static void on_segv(int sig, siginfo_t *si, void *ctx) {
     ucontext_t *uc = ctx;
     u8 *p = si->si_addr;
@@ -44,6 +45,8 @@ static void on_trap(int sig, siginfo_t *si, void *ctx) {
     uc->uc_mcontext.gregs[REG_EFL] &= ~0x100UL;
     if (w_armed) mprotect(w_page, 4096, PROT_NONE);
 }
+
+#endif
 
 extern char __executable_start;
 void watch_dump(void) {
@@ -65,6 +68,11 @@ void watch_tick(u64 ticks) {
         if (!e) return;
         unsigned long long t = 0;
         if (sscanf(e, "%x:%x:%llu", &w_addr, &w_len, &t) < 2) return;
+#if !defined(__x86_64__)
+        fprintf(stderr, "watch: RT_WATCH needs x86-64 (single-step via the trap flag)\n");
+        w_len = 0;
+        return;
+#else
         from = t;
         struct sigaction sa = {0};
         sa.sa_flags = SA_SIGINFO | SA_NODEFER;
@@ -72,6 +80,7 @@ void watch_tick(u64 ticks) {
         sigaction(SIGSEGV, &sa, NULL);
         sa.sa_sigaction = on_trap;
         sigaction(SIGTRAP, &sa, NULL);
+#endif
     }
     if (!w_len || w_armed || ticks < from) return;
     w_page = (u8 *)(((unsigned long)(MEM + w_addr)) & ~4095UL);
