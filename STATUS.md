@@ -218,4 +218,11 @@ Check in over SSH:
 - Baserunning verified via Practice > Running lesson 1: A advances runners, B returns them, shake to
   dash (all Wii Remote-only controls). Scripted runner rounded the bases and scored: 0/1 -> 1/1,
   "NICE JOB!", then Running Part 2. build/baserunning_works.png. (Nunchuk controls not emulated.)
-- Next: Challenge mode further; Nunchuk extension (optional control style).
+- FIX: Challenge mode hung after the Bowser wipe. Its second movie (MB2_COP.thp) recreates the THP
+  reader/decoder threads in the same OSThread objects as the first movie's; our runtime resumed the old
+  coroutines (parked at the end of the first movie, stale registers -> reads at the old movie's end
+  offset with size 0). OSInitContext is now native and retires any coroutine parked on a context being
+  re-initialised. Bowser Jr. invasion cutscene plays; Challenge reaches its stage map
+  (build/challenge_story.png). Exhibition regression run fine (59.4 fps).
+- Debug: DVDRead log names the file and offset (RT_HLELOG).
+- Next: play into a Challenge stage; Nunchuk extension (optional control style).

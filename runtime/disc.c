@@ -87,6 +87,16 @@ u32 disc_load_fst(void) {
     return at;
 }
 u32 disc_fst_size(void) { return fst_size; }
+/* debug: which file a disc offset belongs to */
+const char *disc_file_at(u64 off) {
+    static char buf[600];
+    for (int i = 0; i < nregions; i++)
+        if (regions[i].off <= off && off < regions[i].off + regions[i].size) {
+            snprintf(buf, sizeof buf, "%s +%llx", regions[i].path, (unsigned long long)(off - regions[i].off));
+            return buf;
+        }
+    return "?";
+}
 
 /* read `len` bytes at disc byte offset `off` into guest memory; returns bytes read */
 u32 disc_read(u64 off, u32 dst, u32 len) {

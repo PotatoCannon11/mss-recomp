@@ -93,7 +93,7 @@ void FN___DVDFSInit(CPU *c);
 HLE(DVDInit) { FN___DVDFSInit(c); }
 HLE(DVDReadAbsAsyncPrio) {
     u32 block = c->r[3], dst = c->r[4], len = c->r[5], off = c->r[6], cb = c->r[7];
-    LOG("DVDRead %08X <- disc %llx +%x\n", dst, (unsigned long long)off << 2, len);
+    { const char *disc_file_at(u64 off); LOG("DVDRead %08X <- disc %llx +%x (%s)\n", dst, (unsigned long long)off << 2, len, disc_file_at((u64)off << 2)); }
     u32 n = disc_read((u64)off << 2, dst, len);
     mw32(block + 0x0C, 1);   /* state: busy until the drive interrupt */
     mw32(block + 0x20, n);   /* transferTotal */

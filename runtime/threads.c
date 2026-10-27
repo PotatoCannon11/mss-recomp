@@ -109,6 +109,33 @@ static Co *new_co(u32 ctx) {
     return n;
 }
 
+/* OSInitContext (native, same stores as the SDK). A context being (re)initialised is a new thread
+ * starting from scratch: any coroutine still parked on this context belongs to a previous thread that
+ * was cancelled while blocked (e.g. a movie reader thread recreated in the same OSThread for the next
+ * movie). Retire it, so the next OSLoadContext starts the new entry point instead of resuming the old
+ * thread's code with its stale registers. */
+void FN_OSClearContext(CPU *c);
+void FN_OSInitContext(CPU *c) {
+    u32 x = c->r[3];
+    mw32(x + 0x198, c->r[4]);   /* srr0 */
+    mw32(x + 0x004, c->r[5]);   /* r1 */
+    mw32(x + 0x19C, 0x9032);    /* srr1 */
+    mw32(x + 0x080, 0);         /* cr */
+    mw32(x + 0x08C, 0);         /* xer */
+    mw32(x + 0x008, c->r[2]);
+    mw32(x + 0x034, c->r[13]);
+    for (int i = 3; i < 32; i++)
+        if (i != 13) mw32(x + 4 * i, 0);
+    for (int i = 0; i < 8; i++) mw32(x + 0x1A4 + 4 * i, 0);   /* gqrs */
+    c->r[0] = 0;
+    for (int i = 0; i < nco; i++)
+        if (coro[i]->ctx == x && !coro[i]->dead && coro[i] != cur) {
+            if (ENV("RT_THREADLOG")) fprintf(stderr, "thread context %08X re-initialised: retiring its old coroutine\n", x);
+            coro[i]->dead = 1;
+        }
+    FN_OSClearContext(c);   /* the SDK tail-calls it */
+}
+
 extern u64 g_virtual_tb;
 extern int g_deterministic;
 static int in_irq;
