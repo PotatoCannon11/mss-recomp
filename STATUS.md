@@ -182,3 +182,14 @@ Check in over SSH:
 - SDL init serialized (video now on the GPU thread, audio on the game thread).
 - User at desk: 4x (2560x2112) session holding ~60 fps, GPU thread 48-53% busy on 4,500-draw frames.
 - Next: Challenge mode further (story, team building); baserunning input; GPU-thread vertex decode.
+
+## 2026-10-26 night (max optimization, user goal)
+- User still saw lag during play at 4x (session log: dips to 50-53 fps on 6,600-7,600-draw effect
+  frames with the GPU thread at 61-70% busy).
+- GPU thread cost cut ~3x since then, in a scripted match: 51% -> 39% (decode straight into the GL
+  vertex layout) -> 28% (persistently mapped vertex/index rings, base-vertex draws, quarter fences)
+  -> 18% (per-primitive attribute plans; brief spin before sleeping; 64 KB publish chunks).
+  Windowed 4x (2560x2112): GPU thread avg 18% / peak 21%, game thread ~74% idle, min fps 59.0.
+- RT_FPS now also prints texture uploads, vertex sources and batch-break reasons; RT_VFMTSTAT.
+- Next: user retest at 4x; then fewer GL draws (batch across texture changes with texture arrays /
+  bindless), game-thread hot paths (paired-single quantised loads), frame pacing.
