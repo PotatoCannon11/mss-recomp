@@ -13,7 +13,7 @@ HostPad g_pad = {.acc_z = 1.0f, .rest_z = 1.0f, .ir_valid = 1};
 
 static u32 connect_cb[4], ext_cb[4], sampling_cb[4], fmt[4];
 static int announced, ext_announced;
-static int nunchuk(void) { return ENV("RT_NUNCHUK") != NULL; }
+static int nunchuk(void) { return ENV("RT_NUNCHUK") != NULL || g_wm.nunchuk; }
 #define WPAD_DEV_FREESTYLE 1
 
 /* scripted input for testing without a window: RT_INPUT="from-to:KEYS;..." in retrace ticks
@@ -119,6 +119,13 @@ void wpad_tick(CPU *c) {
     scripted_input();
     g_pad.acc_x = 0; g_pad.acc_y = g_pad.rest_y; g_pad.acc_z = g_pad.rest_z;
     swing_step();
+    wiimote_poll();
+    if (g_wm.present) {   /* a real remote: its buttons add to the others, its motion replaces the synthetic rest pose */
+        if (g_wm.have_accel && !g_pad.swing_t) {
+            g_pad.acc_x = g_wm.acc[0] / 100.0f; g_pad.acc_y = g_wm.acc[1] / 100.0f; g_pad.acc_z = g_wm.acc[2] / 100.0f;
+        }
+        if (g_wm.nunchuk) { g_pad.nc_x = g_wm.nc_x; g_pad.nc_y = g_wm.nc_y; g_pad.nc_c = g_wm.nc_c; g_pad.nc_z = g_wm.nc_z; }
+    }
     void mod_input(void);
     mod_input();
     if (!announced) {
@@ -199,7 +206,7 @@ HLE(WPADRead) {
     u32 st = c->r[4];
     memset(MEM + st, 0, 0x2A);
     if (ch != 0) { mw8(st + 0x29, (u8)-1); return; }
-    mw16(st + 0x0, g_pad.buttons);
+    mw16(st + 0x0, g_pad.buttons | g_wm.buttons);
     mw16(st + 0x2, (u16)(s16)(g_pad.acc_x * 100));
     mw16(st + 0x4, (u16)(s16)(g_pad.acc_y * 100));
     mw16(st + 0x6, (u16)(s16)(g_pad.acc_z * 100));
@@ -226,7 +233,7 @@ HLE(WPADRead) {
         fprintf(stderr, "pad t%llu hold %04X acc %.2f %.2f %.2f pos %.3f %.3f dpd_valid %d dev %d stick %.2f %.2f\n", (unsigned long long)ticks,
                 mr32(k), f[0], f[1], f[2], f[5], f[6], (s8)mr8(k + 0x5E), mr8(k + 0x5C), sx, sy);
     }
-    u16 btn = g_pad.buttons;
+    u16 btn = g_pad.buttons | g_wm.buttons;
     if (nunchuk()) {
         if (g_pad.nc_z) btn |= 0x2000;   /* WPAD_BUTTON_Z */
         if (g_pad.nc_c) btn |= 0x4000;   /* WPAD_BUTTON_C */

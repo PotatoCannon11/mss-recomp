@@ -267,3 +267,10 @@ Check in over SSH:
   settles at ~306 MB by minute 5 and stays flat (no leak); frame rate ~59.9 fps every minute,
   lowest 2 s sample 58.5. The earlier progressive slowdown is gone.
 - Remaining: human Challenge-mode play test (first in-stage match).
+
+## 2026-10-27 (Wii Remotes)
+- NEW: real Wii Remotes over Bluetooth via hid-wiimote evdev devices (runtime/wiimote.c): buttons,
+  real accelerometer (raw-0x200, ~100/g = WPAD units, passed through so the game's own gesture
+  detection sees real swings/throws), Nunchuk stick/C/Z (auto-attached), hot-plug, disconnect. No IR
+  (pointer stays on mouse / right stick). Verified with tools/vwiimote.c (uinput stand-in with the
+  driver's names and codes): A, swing samples and Nunchuk reach KPAD. Untested on real hardware.

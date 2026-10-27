@@ -38,6 +38,16 @@ typedef struct {
 } HostPad;
 void rt_quit(int code);              /* flush recordings, exit immediately */
 extern volatile sig_atomic_t g_quit_req;
+/* a real Wii Remote through Linux hid-wiimote (wiimote.c) */
+typedef struct {
+    int present, have_accel, nunchuk;
+    u16 buttons;
+    s16 acc[3];              /* raw accelerometer minus 0x200, ~100 per g (WPAD units) */
+    float nc_x, nc_y;
+    int nc_c, nc_z;
+} WiimoteState;
+extern WiimoteState g_wm;
+void wiimote_poll(void);
 extern int g_widescreen;
 extern float g_aspect_k;               /* surface aspect / game reference aspect */
 void aspect_set_surface(int w, int h);   /* SYSCONF aspect is 16:9 (default; RT_43=1 for 4:3) */

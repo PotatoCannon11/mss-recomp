@@ -28,6 +28,10 @@ Controls (Wii Remote): mouse = pointer, left/right click = A/B, arrows = d-pad, 
 Gamepads (anything SDL knows: Xbox, PlayStation, Switch Pro, ...) work too and can be plugged in at any
 time: A/B = A/B, X/Y = 1/2, Start/Back/Guide = +/-/HOME, d-pad or left stick = d-pad, right stick = pointer,
 RT or RB = swing (and the pitching pull-up), LT = throw. The mouse takes the pointer back when moved.
+**Real Wii Remotes** (Bluetooth, through Linux's built-in hid-wiimote driver) are picked up
+automatically, with a Nunchuk if plugged in: buttons and real motion go straight to the game. There's no
+sensor bar, so point with the mouse. Pair once: hold 1+2 (or press the red sync button) and run
+`bluetoothctl` -> `scan on` -> `connect <address of "Nintendo RVL-CNT-01">`. `RT_NO_WIIMOTE=1` ignores it.
 `RT_NUNCHUK=1` attaches a Nunchuk (the game's Wii Remote + Nunchuk control style): WASD / left stick =
 stick, Q / LB = Z, E / left-stick click = C.
 
