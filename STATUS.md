@@ -215,4 +215,7 @@ Check in over SSH:
   taller) are stretched rather than kept in proportion (checked on the CPU per draw). 32:9 / 4:3 menus
   now fill; matches unaffected (21:9 avg 59.8 fps). Only real 3D scenery can still end (stage-select
   island skybox at 32:9).
-- Next: Challenge mode, baserunning input.
+- Baserunning verified via Practice > Running lesson 1: A advances runners, B returns them, shake to
+  dash (all Wii Remote-only controls). Scripted runner rounded the bases and scored: 0/1 -> 1/1,
+  "NICE JOB!", then Running Part 2. build/baserunning_works.png. (Nunchuk controls not emulated.)
+- Next: Challenge mode further; Nunchuk extension (optional control style).
