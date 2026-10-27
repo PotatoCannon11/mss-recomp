@@ -198,3 +198,18 @@ Check in over SSH:
   frames (game thread or disc), not rendering.
 - Next: matrix palette to stop position-matrix reloads breaking batches (largest batch-break cause),
   texture batching, the menu/loading dips, baserunning input.
+
+## 2026-10-26 night (dynamic aspect)
+- User asked for MKWii-port-style "any monitor, fullscreen, no crop". Studied patchzyy/Wiicompiled
+  (GPL-3, technique only, no code taken): it patches MKW's EGG::Screen canvas records so the game
+  itself builds Hor+/Vert+ projections into its fixed framebuffer (anamorphic) and stretches to the window.
+- Here, done in the renderer (game-agnostic): the EFB is as wide as the window's shape (SX = S*k,
+  SY = S; k = surface aspect / 16:9), presented filling the window. Projections of full-screen draws are
+  adapted: perspective -> Hor+ (k>1) / Vert+ (k<1); the ~640x448 ortho screen canvas keeps proportions,
+  centred; draws sampling a full-screen EFB copy (post effects / feedback quads) and offscreen passes
+  (small viewport) are left alone. MTX projection builders are HLE'd natively (RT_ASPECTLOG traces callers).
+- Live resize (internal resolution follows window height), RT_FULLSCREEN=1, RT_ASPECT=W:H, RT_ASPECT_OFF.
+- Verified 21:9, 32:9, 4:3, 1:1: matches great at all; menus keep proportions (at extremes their 2D
+  backgrounds/skybox end, showing bars/edges - nothing authored there).
+- Next: extend menu backgrounds at extreme aspects (stretch full-canvas background quads), Challenge mode,
+  baserunning input.

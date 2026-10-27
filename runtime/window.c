@@ -37,6 +37,7 @@ static const char *(*SDL_GetError_)(void);
  * initialise under this lock */
 pthread_mutex_t g_sdl_lock = PTHREAD_MUTEX_INITIALIZER;
 static int window_init_locked(int w, int h);
+void window_size(int *w, int *h) { *w = *h = 0; if (win) SDL_GetWindowSize_(win, w, h); }
 int gfx_window_init(int w, int h) {
     pthread_mutex_lock(&g_sdl_lock);
     int r = window_init_locked(w, h);
@@ -57,7 +58,9 @@ static int window_init_locked(int w, int h) {
     SDL_GL_SetAttribute_(18, 3);   /* MINOR */
     SDL_GL_SetAttribute_(21, 1);   /* PROFILE_MASK: core */
     SDL_GL_SetAttribute_(5, 1);    /* DOUBLEBUFFER */
-    win = SDL_CreateWindow_("Mario Super Sluggers", 0x2FFF0000, 0x2FFF0000, ENV("RT_43") ? 960 : 1280, 720, 0x2 | 0x20);   /* before the NAND sets g_widescreen */
+    u32 flags = 0x2 | 0x20;   /* OPENGL | RESIZABLE */
+    if (ENV("RT_FULLSCREEN")) flags |= 0x1001;   /* FULLSCREEN_DESKTOP: the monitor's own resolution and shape */
+    win = SDL_CreateWindow_("Mario Super Sluggers", 0x2FFF0000, 0x2FFF0000, ENV("RT_43") ? 960 : 1280, 720, flags);
     if (!win || !SDL_GL_CreateContext_(win)) { fprintf(stderr, "window: %s\n", SDL_GetError_()); return 0; }
     SDL_GL_SetSwapInterval_(0);   /* pacing comes from the emulated VI */
     return 1;
@@ -112,11 +115,8 @@ void window_present(unsigned efb_tex, int sx, int sy, int sw, int sh, int efb_w,
     glDisable(GL_SCISSOR_TEST);
     glClearColor(0, 0, 0, 1);
     glClear(GL_COLOR_BUFFER_BIT);
-    /* keep the game's aspect (16:9 or 4:3), letterboxed */
-    int an = g_widescreen ? 16 : 4, ad = g_widescreen ? 9 : 3;
-    int dw = ww, dh = ww * ad / an;
-    if (dh > wh) { dh = wh; dw = wh * an / ad; }
-    int dx = (ww - dw) / 2, dy = (wh - dh) / 2;
+    /* the frame is rendered for this window's shape (dynamic aspect): fill it, no bars */
+    int dw = ww, dh = wh, dx = 0, dy = 0;
     glBlitFramebuffer(sx, efb_h - sy, sx + sw, efb_h - (sy + sh), dx, dy + dh, dx + dw, dy, GL_COLOR_BUFFER_BIT, GL_LINEAR);
     (void)efb_w;
     SDL_GL_SwapWindow_(win);

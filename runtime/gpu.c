@@ -35,7 +35,8 @@ static void parse_stream(void);
  * and the window, parses and draws, and raises the token/finish interrupt flags. RT_DETERMINISTIC
  * (or RT_GPU_INLINE) keeps everything on the game thread. */
 int gpu_threaded;
-u64 gpu_stat_verts[2][2];   /* [from display list][indexed positions] */
+u64 gpu_stat_verts[2][2];
+u64 gpu_stat_xf[6];   /* changed words: pos mtx, nrm mtx, tex mtx, lights, xf regs, bp tev/fog */   /* [from display list][indexed positions] */
 u64 gpu_busy_ns;   /* GPU thread time spent parsing/drawing (RT_FPS reports it per second) */
 #define RING (32u << 20)
 static u8 ring[RING];
@@ -442,11 +443,13 @@ static void load_xf(u32 addr, u32 n, const u8 *p) {
         if (a < 0x1000) {
             if (g_gpu.xfmem[a] == v) continue;
             g_gpu.xfmem[a] = v;
+            gpu_stat_xf[a < 0x100 ? 0 : a < 0x500 ? 1 : a < 0x600 ? 2 : 3]++;
             if (a < g_gpu.xf_lo) g_gpu.xf_lo = a;
             if (a > g_gpu.xf_hi) g_gpu.xf_hi = a;
             g_gpu.udirty = 1;
         } else if (a < 0x1100) {
             if (g_gpu.xfreg[a - 0x1000] == v) continue;
+            gpu_stat_xf[4]++;
             g_gpu.xfreg[a - 0x1000] = v;
             g_gpu.udirty = 1;
         }
@@ -470,7 +473,7 @@ static void load_bp(u32 v) {
     }
     u32 old = g_gpu.bp[reg];
     g_gpu.bp[reg] = (old & ~mask) | (v & mask & 0xFFFFFF);
-    if ((reg >= 0xE0 || reg == 0x43) && g_gpu.bp[reg] != old) g_gpu.udirty = 1;   /* TEV colours, fog, alpha refs */
+    if ((reg >= 0xE0 || reg == 0x43) && g_gpu.bp[reg] != old) { g_gpu.udirty = 1; gpu_stat_xf[5]++; }   /* TEV colours, fog, alpha refs */
     switch (reg) {
     case 0x45:   /* PE_DONE: draw done -> finish interrupt */
         if (v & 2) gfx_flush();

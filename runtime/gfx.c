@@ -12,6 +12,7 @@
 #include <GL/glext.h>
 #include <stdarg.h>
 #include <stddef.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include "runtime.h"
@@ -22,8 +23,10 @@
 /* internal resolution: the EFB is rendered at RT_SCALE x the console's 640x528 (default 2 in a window,
  * 1 headless). Game-visible coordinates stay native; only GL viewports, scissors and copy targets scale. */
 static int S = 1;
-#define EW (EFB_W * S)
+static float SX = 1, SY = 1;   /* EFB pixels per game pixel: SY = S; SX = S * g_aspect_k (dynamic aspect) */
+#define EW ((int)lroundf(EFB_W * SX))
 #define EH (EFB_H * S)
+static inline int px_x(int x) { return (int)lroundf(x * SX); }   /* game x -> EFB x */
 
 static GLuint efb_fbo, efb_color, efb_depth, vao, vbo, ibo, ubo;
 static int ready;
@@ -356,7 +359,7 @@ static GLuint get_prog(const PipeKey *k) {
 static u8 tmem_tlut[1 << 20];   /* TMEM: palettes are loaded here (BP 0x64/0x65), then indexed */
 static u64 tlut_gen;            /* bumped whenever palette contents change, so cached lookups recheck */
 
-typedef struct { u32 addr, fmt, w, h, tlut, hash; GLuint tex; int efb; u32 mode0; int next; } TexEntry;
+typedef struct { u32 addr, fmt, w, h, tlut, hash; GLuint tex; int efb; u32 mode0; int next; u16 src_w, src_h; } TexEntry;   /* src_*: EFB area an EFB copy came from */
 static TexEntry texcache[4096];
 static u64 stat_tex_new, stat_tex_bytes, stat_verts, stat_brk[8];   /* RT_FPS counters */
 static int ntex;
@@ -667,7 +670,7 @@ static void apply_state(void) {
     int x1 = (int)((s1 >> 12) & 0x7FF) - 342, y1 = (int)(s1 & 0x7FF) - 342;
     glEnable(GL_SCISSOR_TEST);
     if (x1 >= x0 && y1 >= y0)
-        glScissor(x0 * S, (EFB_H - 1 - y1) * S, (x1 - x0 + 1) * S, (y1 - y0 + 1) * S);
+        glScissor(px_x(x0), (EFB_H - 1 - y1) * S, px_x(x1 + 1) - px_x(x0), (y1 - y0 + 1) * S);
     else
         glScissor(0, 0, 0, 0);
 }
@@ -691,7 +694,7 @@ static GLsync vfence[4], ifence[4];
 #define bidx (iring + istart)
 static u32 nbv, nbi;
 static GLuint batch_prog;
-typedef struct { GLuint prog; u32 tex[8][4]; u32 st[5]; } BatchSig;
+typedef struct { GLuint prog; u32 tex[8][4]; u32 st[5]; int adapt; } BatchSig;
 static BatchSig cur_sig;
 static int have_sig;
 
@@ -715,6 +718,37 @@ static void upload_uniforms(const Uniforms *u) {
     }
     glBindBufferRange(GL_UNIFORM_BUFFER, 0, ubo, off, sizeof *u);
     off += size;
+}
+
+/* ---- dynamic aspect (see aspect.c). The projection for the current draw is adapted to the surface
+ * when it targets the whole screen: perspective -> Hor+ / Vert+; the 2D screen canvas (ortho about
+ * 640x448) keeps its proportions, centred. Not adapted: offscreen passes (smaller viewport) and draws
+ * that sample a full-screen EFB copy (post effects, which must cover the whole surface). */
+static int full_screen_copy(u32 img0, u32 img3) {
+    TexEntry *e = tex_find_efb((img3 & 0xFFFFFF) << 5);
+    (void)img0;
+    return e && e->src_w >= 600 && e->src_h >= 400;
+}
+static int projection_mode(const BatchSig *sig) {
+    if (g_aspect_k == 1.0f || ENV("RT_ASPECT_OFF")) return 0;
+    float vw = fabsf(u2f(g_gpu.xfreg[0x1A])) * 2, vh = fabsf(u2f(g_gpu.xfreg[0x1B])) * 2;
+    if (vw < 600 || vh < 400) return 0;   /* offscreen / partial viewport */
+    for (int m = 0; m < 8; m++)           /* screen-space effect over the whole frame */
+        if (sig->tex[m][0] && full_screen_copy(sig->tex[m][0], sig->tex[m][2])) return 0;
+    if (g_gpu.xfreg[0x26] & 1) {          /* orthographic */
+        float pw = 2.0f / fabsf(u2f(g_gpu.xfreg[0x20])), ph = 2.0f / fabsf(u2f(g_gpu.xfreg[0x22]));
+        if (pw < 560 || pw > 900 || ph < 400 || ph > 480) return 0;   /* not the screen canvas */
+        if (ENV("RT_ASPECT_STRETCH_2D")) return 0;
+        return 2;
+    }
+    return 1;
+}
+static void projection_adapt(Uniforms *u) {
+    float kx = g_aspect_k > 1 ? 1.0f / g_aspect_k : 1.0f, ky = g_aspect_k < 1 ? g_aspect_k : 1.0f;
+    u->proj[0][0] *= kx;   /* x scale */
+    u->proj[0][1] *= kx;   /* x offset (off-centre frustum / ortho translation) */
+    u->proj[0][2] *= ky;
+    u->proj[0][3] *= ky;
 }
 
 static void batch_flush(void) {
@@ -789,6 +823,13 @@ void gfx_draw(int prim, u32 n, VertexFill fill, void *ctx) {
     }
     sig.st[0] = g_gpu.bp[0x00] & (3 << 14); sig.st[1] = g_gpu.bp[0x40]; sig.st[2] = g_gpu.bp[0x41];
     sig.st[3] = g_gpu.bp[0x20]; sig.st[4] = g_gpu.bp[0x21];
+    sig.adapt = projection_mode(&sig);
+    if (ENV("RT_ASPECT_DEBUG") && (long)g_gpu.frames >= atol(ENV("RT_ASPECT_DEBUG")) && (long)g_gpu.frames < atol(ENV("RT_ASPECT_DEBUG")) + 2) {
+        fprintf(stderr, "adraw mode %d n %u vp %.0fx%.0f ortho %u pw %.1f ph %.1f tex:", sig.adapt, n, fabsf(u2f(g_gpu.xfreg[0x1A])) * 2, fabsf(u2f(g_gpu.xfreg[0x1B])) * 2,
+                g_gpu.xfreg[0x26] & 1, 2.0f / fabsf(u2f(g_gpu.xfreg[0x20])), 2.0f / fabsf(u2f(g_gpu.xfreg[0x22])));
+        for (int m = 0; m < 8; m++) if (sig.tex[m][0]) { TexEntry *te = tex_find_efb((sig.tex[m][2] & 0xFFFFFF) << 5); fprintf(stderr, " %d:%08X%s", m, (sig.tex[m][2] & 0xFFFFFF) << 5, te ? "(efb)" : ""); }
+        fprintf(stderr, "\n");
+    }
     int tri = prim <= 4;
     int brk = !tri ? 1 : g_gpu.udirty ? 2 : !have_sig ? 3 : memcmp(&sig, &cur_sig, sizeof sig) ? (sig.prog != cur_sig.prog ? 4 : memcmp(sig.tex, cur_sig.tex, sizeof sig.tex) ? 5 : 6)
             : (nbv + n > MAXB || nbi + n * 3 > MAXB * 3) ? 7 : 0;
@@ -804,9 +845,14 @@ void gfx_draw(int prim, u32 n, VertexFill fill, void *ctx) {
             if ((tref >> 6) & 1) bind_texture(tref & 7);
         }
         static Uniforms u;
-        if (g_gpu.udirty) {
-            fill_uniforms(&u);
-            upload_uniforms(&u);
+        static int u_adapt = -1;
+        if (g_gpu.udirty || sig.adapt != u_adapt) {
+            if (g_gpu.udirty) fill_uniforms(&u);
+            Uniforms *up = &u;
+            static Uniforms ua;
+            if (sig.adapt) { ua = u; projection_adapt(&ua); up = &ua; }
+            upload_uniforms(up);
+            u_adapt = sig.adapt;
         }
         g_gpu.udirty = 0;
         glBindFramebuffer(GL_FRAMEBUFFER, efb_fbo);
@@ -876,7 +922,7 @@ void gfx_draw(int prim, u32 n, VertexFill fill, void *ctx) {
         gfx_batch_flush();
         static u8 last[4];
         u8 px[4];
-        glReadPixels(pick_x * S, (EFB_H - 1 - pick_y) * S, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, px);
+        glReadPixels(px_x(pick_x), (EFB_H - 1 - pick_y) * S, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, px);
         if (memcmp(px, last, 4)) {
             fprintf(stderr, "PICK draw %llu -> %02X%02X%02X%02X  stages:", (unsigned long long)draws, px[0], px[1], px[2], px[3]);
             for (int st = 0; st < ns; st++)
@@ -954,10 +1000,11 @@ static void write_ppm(const char *dir, u64 frame, int sx, int sy, int w, int h) 
     FILE *f = fopen(path, "wb");
     if (!f) return;
     int k = ENV("RT_FRAMES_HIRES") ? S : 1;   /* full internal resolution, or native size */
-    fprintf(f, "P6\n%d %d\n255\n", w * k, h * k);
+    int ow = (int)lroundf(w * k * SX / S);   /* keeps the presented aspect */
+    fprintf(f, "P6\n%d %d\n255\n", ow, h * k);
     for (int y = 0; y < h * k; y++)
-        for (int x = 0; x < w * k; x++)
-            fwrite(frame_rgba + 4 * ((size_t)(EH - 1 - (sy * S + y * S / k)) * EW + sx * S + x * S / k), 1, 3, f);
+        for (int x = 0; x < ow; x++)
+            fwrite(frame_rgba + 4 * ((size_t)(EH - 1 - (sy * S + y * S / k)) * EW + px_x(sx) + x * S / k), 1, 3, f);
     fclose(f);
 }
 
@@ -979,7 +1026,7 @@ static void record_video(int sx, int sy, int sw, int sh) {
         char cmd[1024];
         snprintf(cmd, sizeof cmd, "ffmpeg -loglevel error -y -f rawvideo -pix_fmt rgba -s %dx%d -r 60 -i - "
                  "-vf vflip,scale=%d:480 -c:v libx264 -preset veryfast -crf 20 -pix_fmt yuv420p '%s'", VID_W, VID_H,
-                 g_widescreen ? 854 : 640, out);
+                 ((int)lroundf(480 * g_aspect_k * (g_widescreen ? 16.0f / 9.0f : 4.0f / 3.0f)) + 1) & ~1, out);
         if (!(pipe_ = popen(cmd, "w"))) { failed = 1; return; }
     }
     struct timespec t;
@@ -993,15 +1040,16 @@ static void record_video(int sx, int sy, int sw, int sh) {
      * to the full height like the VI does */
     static u8 *src;
     static size_t src_size;
-    size_t need = (size_t)sw * S * sh * S * 4;
+    int pw = px_x(sx + sw) - px_x(sx);
+    size_t need = (size_t)pw * sh * S * 4;
     if (need > src_size) { free(src); src = malloc(need); src_size = need; }
     glBindFramebuffer(GL_READ_FRAMEBUFFER, efb_fbo);
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
-    glReadPixels(sx * S, (EFB_H - sy - sh) * S, sw * S, sh * S, GL_RGBA, GL_UNSIGNED_BYTE, src);
+    glReadPixels(px_x(sx), (EFB_H - sy - sh) * S, pw, sh * S, GL_RGBA, GL_UNSIGNED_BYTE, src);
     for (int y = 0; y < VID_H; y++) {
-        const u8 *row = src + (size_t)4 * sw * S * ((y * sh / VID_H) * S);
+        const u8 *row = src + (size_t)4 * pw * ((y * sh / VID_H) * S);
         u8 *out = canvas + 4 * VID_W * y;
-        for (int x = 0; x < VID_W; x++) memcpy(out + 4 * x, row + (size_t)4 * ((x < sw ? x : sw - 1) * S), 4);
+        for (int x = 0; x < VID_W; x++) memcpy(out + 4 * x, row + (size_t)4 * (x * pw / VID_W), 4);   /* full width, any aspect */
     }
     if (next_t == 0) { next_t = now; fprintf(stderr, "video: starts %.3f s after launch (offset for RT_WAV)\n", now); }
     int reps = 0;
@@ -1009,6 +1057,39 @@ static void record_video(int sx, int sy, int sw, int sh) {
     while (reps--) fwrite(canvas, 1, sizeof canvas, pipe_);
 }
 __attribute__((constructor)) static void note_start(void) { clock_gettime(CLOCK_MONOTONIC, &g_start); }
+/* internal resolution for a window: RT_SCALE, or enough lines to match the window (sharp at any size) */
+static int auto_scale(int wh) {
+    if (ENV("RT_SCALE")) return atoi(ENV("RT_SCALE"));
+    int s = (wh + 447) / 448;
+    return s < 1 ? 1 : s;
+}
+static void efb_storage(void) {
+    glBindTexture(GL_TEXTURE_2D, efb_color);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, EW, EH, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+    glBindRenderbuffer(GL_RENDERBUFFER, efb_depth);
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, EW, EH);
+    free(frame_rgba);
+    frame_rgba = NULL;
+}
+/* follow the window: shape (dynamic aspect) and size (internal resolution), between frames */
+static void track_window(void) {
+    void window_size(int *w, int *h);
+    int ww, wh;
+    window_size(&ww, &wh);
+    static int lw, lh;
+    if (!ww || !wh || (ww == lw && wh == lh)) return;
+    lw = ww; lh = wh;
+    aspect_set_surface(ww, wh);
+    S = auto_scale(wh);
+    if (S < 1) S = 1;
+    if (S > 8) S = 8;
+    SY = (float)S;
+    SX = S * g_aspect_k;
+    efb_storage();
+    g_gpu.udirty = 1;   /* projections re-adapt to the new shape */
+    fprintf(stderr, "gfx: window %dx%d -> internal %dx%d (aspect x%.3f)\n", ww, wh, EW, EH, g_aspect_k);
+}
+
 void gfx_present(int sx, int sy, int sw, int sh) {
     gfx_batch_flush();
     invalidate_gl_caches();
@@ -1032,6 +1113,11 @@ void gfx_present(int sx, int sy, int sw, int sh) {
         if (f0) fprintf(stderr, "    vertices: fifo direct %llu, fifo indexed %llu, display list direct %llu, display list indexed %llu\n",
                         (unsigned long long)gpu_stat_verts[0][0], (unsigned long long)gpu_stat_verts[0][1], (unsigned long long)gpu_stat_verts[1][0], (unsigned long long)gpu_stat_verts[1][1]);
         memset(gpu_stat_verts, 0, sizeof gpu_stat_verts);
+        extern u64 gpu_stat_xf[6];
+        if (f0) fprintf(stderr, "    uniform changes: pos mtx %llu, nrm mtx %llu, tex mtx %llu, lights %llu, xf regs %llu, tev/fog %llu\n",
+                        (unsigned long long)gpu_stat_xf[0], (unsigned long long)gpu_stat_xf[1], (unsigned long long)gpu_stat_xf[2],
+                        (unsigned long long)gpu_stat_xf[3], (unsigned long long)gpu_stat_xf[4], (unsigned long long)gpu_stat_xf[5]);
+        memset(gpu_stat_xf, 0, sizeof gpu_stat_xf);
         t0 = t;
         f0 = g_gpu.frames;
     }
@@ -1058,7 +1144,8 @@ void gfx_present(int sx, int sy, int sw, int sh) {
         }
     }
     record_video(sx, sy, sw, sh);
-    window_present(efb_color, sx * S, sy * S, sw * S, sh * S, EW, EH);
+    window_present(efb_color, px_x(sx), sy * S, px_x(sx + sw) - px_x(sx), sh * S, EW, EH);
+    track_window();
     glBindFramebuffer(GL_FRAMEBUFFER, efb_fbo);
 }
 
@@ -1093,11 +1180,12 @@ void gfx_efb_copy(u32 cmd) {
             glGenTextures(1, &e->tex);
         }
         if (e) {
-            e->addr = dst; e->w = tw; e->h = th; e->efb = 1; e->mode0 = 0;
+            e->addr = dst; e->w = tw; e->h = th; e->efb = 1; e->mode0 = 0; e->src_w = (u16)sw; e->src_h = (u16)sh;
             g_gpu.efb_gen++;
             glBindTexture(GL_TEXTURE_2D, e->tex);
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, tw * S, th * S, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
-            efb_convert_copy(e->tex, cmd, sx, sy, sw, sh, tw * S, th * S);
+            int ptw = (int)lroundf(tw * SX); if (ptw < 1) ptw = 1;
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, ptw, th * S, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+            efb_convert_copy(e->tex, cmd, sx, sy, sw, sh, ptw, th * S);
             glBindFramebuffer(GL_FRAMEBUFFER, efb_fbo);
         }
     }
@@ -1105,7 +1193,7 @@ void gfx_efb_copy(u32 cmd) {
         u32 ar = g_gpu.bp[0x4F], gb = g_gpu.bp[0x50], zv = g_gpu.bp[0x51];
         glBindFramebuffer(GL_FRAMEBUFFER, efb_fbo);
         glEnable(GL_SCISSOR_TEST);
-        glScissor(sx * S, (EFB_H - sy - sh) * S, sw * S, sh * S);
+        glScissor(px_x(sx), (EFB_H - sy - sh) * S, px_x(sx + sw) - px_x(sx), sh * S);
         u32 pe = g_gpu.bp[0x41];
         glColorMask((pe >> 3) & 1, (pe >> 3) & 1, (pe >> 3) & 1, (pe >> 4) & 1);
         glDepthMask((g_gpu.bp[0x40] >> 4) & 1);
@@ -1128,9 +1216,16 @@ void gfx_flush(void) {
 
 void gfx_init(void) {
     int windowed = gfx_window_init(EFB_W, EFB_H);
-    S = ENV("RT_SCALE") ? atoi(ENV("RT_SCALE")) : windowed ? 2 : 1;
+    void window_size(int *w, int *h);
+    int ww = 16, wh = 9;
+    if (windowed) window_size(&ww, &wh);
+    else if (ENV("RT_43")) { ww = 4; wh = 3; }
+    aspect_set_surface(ww, wh);
+    S = windowed ? auto_scale(wh) : (ENV("RT_SCALE") ? atoi(ENV("RT_SCALE")) : 1);
     if (S < 1) S = 1;
     if (S > 8) S = 8;
+    SY = (float)S;
+    SX = S * g_aspect_k;
     if (!windowed && !ctx_init()) {
         fprintf(stderr, "gfx: no OpenGL context; running without rendering\n");
         return;
@@ -1151,7 +1246,7 @@ void gfx_init(void) {
         fprintf(stderr, "gfx: EFB framebuffer incomplete\n");
         return;
     }
-    fprintf(stderr, "gfx: internal resolution %dx%d (RT_SCALE=%d)\n", EW, EH, S);
+    fprintf(stderr, "gfx: internal resolution %dx%d (RT_SCALE=%d, aspect x%.3f)\n", EW, EH, S, g_aspect_k);
     glViewport(0, 0, EW, EH);
     glGenVertexArrays(1, &vao);
     glBindVertexArray(vao);

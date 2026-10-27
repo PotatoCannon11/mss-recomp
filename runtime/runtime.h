@@ -36,7 +36,9 @@ typedef struct {
 } HostPad;
 void rt_quit(int code);              /* flush recordings, exit immediately */
 extern volatile sig_atomic_t g_quit_req;
-extern int g_widescreen;   /* SYSCONF aspect is 16:9 (default; RT_43=1 for 4:3) */
+extern int g_widescreen;
+extern float g_aspect_k;               /* surface aspect / game reference aspect */
+void aspect_set_surface(int w, int h);   /* SYSCONF aspect is 16:9 (default; RT_43=1 for 4:3) */
 void wpad_start_swing(void);
 void wpad_start_gesture(int g);   /* 0 swing, 1 / 2 throw */
 extern HostPad g_pad;

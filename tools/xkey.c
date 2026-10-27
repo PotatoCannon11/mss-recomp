@@ -1,7 +1,7 @@
 /* xkey: send key presses / mouse clicks through XTest, to drive Dolphin's emulated Wii Remote
  * (keyboard/mouse bindings in WiimoteNew.ini) for side-by-side comparisons.
  *   cc -O2 -o build/xkey tools/xkey.c -lX11 -lXtst
- *   DISPLAY=:1 build/xkey move X Y | click N [ms] | key NAME [ms] | down NAME | up NAME | bdown N | bup N | sleep MS
+ *   DISPLAY=:1 build/xkey move X Y | click N [ms] | key NAME [ms] | down NAME | up NAME | bdown N | bup N | resize WIN W H | sleep MS
  *   (several commands may follow) */
 #include <X11/Xlib.h>
 #include <X11/extensions/XTest.h>
@@ -34,6 +34,9 @@ int main(int argc, char **argv) {
         } else if ((!strcmp(argv[i], "bdown") || !strcmp(argv[i], "bup")) && i + 1 < argc) {
             XTestFakeButtonEvent(d, atoi(argv[i + 1]), argv[i][1] == 'd', 0);
             i++;
+        } else if (!strcmp(argv[i], "resize") && i + 3 < argc) {   /* resize WINDOWID W H */
+            XResizeWindow(d, (Window)strtoul(argv[i + 1], NULL, 0), atoi(argv[i + 2]), atoi(argv[i + 3]));
+            i += 3;
         } else if (!strcmp(argv[i], "sleep") && i + 1 < argc) {
             usleep(atoi(argv[++i]) * 1000);
         }
